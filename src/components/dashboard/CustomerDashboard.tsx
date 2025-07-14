@@ -6,6 +6,22 @@ import { useOCR } from '../../hooks/useOCR';
 import { extractBankStatementData } from '../../utils/dataExtractor';
 import { apiService } from '../../services/api';
 
+
+const mockText = `
+Account Holder: JOHN DOE
+Bank: Example Bank
+Account Number: 1234567890
+Statement Period: 01/01/2024 - 01/31/2024
+
+01/01/2024  Salary Deposit        2000.00  credit  2000.00
+01/03/2024  Grocery Store         150.50   debit   1849.50
+01/10/2024  Online Shopping       100.00   debit   1749.50
+01/15/2024  Refund                50.00    credit  1799.50
+`;
+
+const extracted = extractBankStatementData(mockText);
+console.log(JSON.stringify(extracted, null, 2));
+
 interface CustomerDashboardProps {
   user: User;
 }
@@ -70,19 +86,21 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ user }) =>
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
   const [extractedData, setExtractedData] = useState<BankStatementData | null>(null);
   const [currentFileName, setCurrentFileName] = useState<string>('');
+  const [uploadType, setUploadType] = useState<'bank' | 'creditcard' | null>(null);
   const { processImage, isProcessing, progress } = useOCR();
 
-  const handleFileSelect = async (file: File) => {
+  const handleFileSelect = async (file: File, type: 'bank' | 'creditcard') => {
     try {
       setUploadStatus('uploading');
       setExtractedData(null);
+      setUploadType(type);
       setCurrentFileName(file.name);
 
       let rawData: ExtractedDataRaw;
       let cleanedData: BankStatementData;
 
       if (file.type === 'application/pdf') {
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        await new Promise((resolve) => setTimeout(resolve, 3000));
         rawData = extractBankStatementData('');
       } else {
         const result = await processImage(file);
@@ -103,6 +121,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ user }) =>
       });
 
       setExtractedData(cleanedData);
+      
       setUploadStatus('success');
     } catch (error) {
       console.error('Error processing file:', error);
@@ -113,11 +132,13 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ user }) =>
   const handleNewUpload = () => {
     setExtractedData(null);
     setUploadStatus('idle');
+    setUploadType(null);
     setCurrentFileName('');
   };
-
+   console.log('Extracted Data:',extractedData)
   return (
     <div>
+      <pre>{JSON.stringify(extractedData, null, 2)}</pre>
       {/* Welcome Section */}
       <div className="row mb-4">
         <div className="col-12">
@@ -125,9 +146,11 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ user }) =>
             <div className="card-body p-4">
               <div className="row align-items-center">
                 <div className="col-md-8">
-                  <h2 className="h3 fw-bold mb-2">Welcome back, {user.full_name}!</h2>
+                  <h2 className="h3 fw-bold mb-2">
+                    Welcome back, {user.full_name}!
+                  </h2>
                   <p className="mb-0 opacity-90">
-                    Upload your bank statements to extract transaction data automatically.
+                    Upload your statements or credit card data to extract information automatically.
                   </p>
                 </div>
                 <div className="col-md-4 text-md-end">
@@ -143,59 +166,39 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ user }) =>
 
       {!extractedData ? (
         <div>
-          {/* Features */}
-          <div className="row g-4 mb-5">
-            <div className="col-md-4">
-              <div className="card h-100 border-0 shadow-sm card-hover">
+          {/* Upload Options */}
+          <div className="row justify-content-center g-4 mb-5">
+            <div className="col-md-5">
+              <div className="card border-0 shadow-sm h-100">
                 <div className="card-body text-center p-4">
-                  <div className="feature-icon bg-primary bg-opacity-10">
-                    <i className="bi bi-lightning-fill text-primary fs-3"></i>
-                  </div>
-                  <h5 className="card-title fw-semibold">Fast Processing</h5>
-                  <p className="card-text text-muted">
-                    Advanced OCR technology extracts data from your bank statements in seconds.
+                  <i className="bi bi-bank fs-1 text-primary mb-3"></i>
+                  <h5 className="fw-semibold">Upload Bank Statement</h5>
+                  <p className="text-muted">
+                    Extract transactions, balances, and account info from bank statements.
                   </p>
+                  <FileUpload
+                    onFileSelect={(file) => handleFileSelect(file, 'bank')}
+                    isProcessing={isProcessing}
+                    uploadStatus={uploadStatus}
+                  />
                 </div>
               </div>
             </div>
-
-            <div className="col-md-4">
-              <div className="card h-100 border-0 shadow-sm card-hover">
+            <div className="col-md-5">
+              <div className="card border-0 shadow-sm h-100">
                 <div className="card-body text-center p-4">
-                  <div className="feature-icon bg-success bg-opacity-10">
-                    <i className="bi bi-shield-check text-success fs-3"></i>
-                  </div>
-                  <h5 className="card-title fw-semibold">Secure & Private</h5>
-                  <p className="card-text text-muted">
-                    All processing is done securely. Your data is encrypted and protected.
+                  <i className="bi bi-credit-card-2-front fs-1 text-success mb-3"></i>
+                  <h5 className="fw-semibold">Upload Credit Card Statement</h5>
+                  <p className="text-muted">
+                    Extract card numbers, expiry dates, and credit card transactions.
                   </p>
+                  <FileUpload
+                    onFileSelect={(file) => handleFileSelect(file, 'creditcard')}
+                    isProcessing={isProcessing}
+                    uploadStatus={uploadStatus}
+                  />
                 </div>
               </div>
-            </div>
-
-            <div className="col-md-4">
-              <div className="card h-100 border-0 shadow-sm card-hover">
-                <div className="card-body text-center p-4">
-                  <div className="feature-icon bg-info bg-opacity-10">
-                    <i className="bi bi-bank text-info fs-3"></i>
-                  </div>
-                  <h5 className="card-title fw-semibold">Accurate Extraction</h5>
-                  <p className="card-text text-muted">
-                    Precisely extracts transactions, balances, and account information.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Upload Section */}
-          <div className="row justify-content-center">
-            <div className="col-lg-8">
-              <FileUpload 
-                onFileSelect={handleFileSelect}
-                isProcessing={isProcessing}
-                uploadStatus={uploadStatus}
-              />
             </div>
           </div>
 
@@ -209,8 +212,8 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ user }) =>
                       <span className="fw-medium">Processing Progress</span>
                       <span className="text-muted">{progress}%</span>
                     </div>
-                    <div className="progress" style={{height: '8px'}}>
-                      <div 
+                    <div className="progress" style={{ height: '8px' }}>
+                      <div
                         className="progress-bar progress-bar-striped progress-bar-animated"
                         role="progressbar"
                         style={{ width: `${progress}%` }}
@@ -233,21 +236,64 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ user }) =>
             className="btn btn-outline-primary btn-icon mb-4"
           >
             <i className="bi bi-arrow-left"></i>
-            Upload New Statement
+            Upload New File
           </button>
 
           {/* Success Message */}
           <div className="alert alert-success d-flex align-items-center mb-4" role="alert">
             <i className="bi bi-check-circle-fill me-2"></i>
             <div>
-              <strong>Success!</strong> Your bank statement "{currentFileName}" has been processed and saved.
+              <strong>Success!</strong> Your {uploadType === 'creditcard' ? 'credit card statement' : 'bank statement'} "<strong>{currentFileName}</strong>" has been processed and saved.
             </div>
           </div>
 
-          {/* Extracted Data */}
+          {/* Uploaded File Details */}
+          <div className="card border-0 shadow-sm mb-4">
+            <div className="card-body">
+              <h5 className="fw-bold mb-3">Uploaded File Details</h5>
+              <ul className="list-group list-group-flush">
+                <li className="list-group-item">
+                  <strong>File Name:</strong> {currentFileName}
+                </li>
+                <li className="list-group-item">
+                  <strong>Upload Type:</strong> {uploadType === 'creditcard' ? 'Credit Card Statement' : 'Bank Statement'}
+                </li>
+                {extractedData.accountHolder && (
+                  <li className="list-group-item">
+                    <strong>Account Holder:</strong> {extractedData.accountHolder}
+                  </li>
+                )}
+                {extractedData.bankName && (
+                  <li className="list-group-item">
+                    <strong>Bank:</strong> {extractedData.bankName}
+                  </li>
+                )}
+                {extractedData.accountNumber && (
+                  <li className="list-group-item">
+                    <strong>Account Number:</strong> {extractedData.accountNumber}
+                  </li>
+                )}
+                {extractedData.cardNumber && (
+                  <li className="list-group-item">
+                    <strong>Card Number:</strong> {extractedData.cardNumber}
+                  </li>
+                )}
+                {extractedData.expiryDate && (
+                  <li className="list-group-item">
+                    <strong>Expiry Date:</strong> {extractedData.expiryDate}
+                  </li>
+                )}
+                {extractedData.statementPeriod && (
+                  <li className="list-group-item">
+                    <strong>Statement Period:</strong> {extractedData.statementPeriod}
+                  </li>
+                )}
+              </ul>
+            </div>
+          </div>
           <ExtractedData data={extractedData} />
         </div>
       )}
     </div>
   );
-};
+}; 
