@@ -3,24 +3,9 @@ import type { User } from '../../services/api';
 import { FileUpload } from '../FileUpload';
 import { ExtractedData } from '../ExtractedData';
 import { useOCR } from '../../hooks/useOCR';
-import { extractBankStatementData } from '../../utils/dataExtractor';
+import { extractBankStatementData } from '../../utils/StatementdataExtractor';
+import {extractCreditCardStatementData} from '../../utils/CreditCarddataExtractor';
 import { apiService } from '../../services/api';
-
-
-const mockText = `
-Account Holder: JOHN DOE
-Bank: Example Bank
-Account Number: 1234567890
-Statement Period: 01/01/2024 - 01/31/2024
-
-01/01/2024  Salary Deposit        2000.00  credit  2000.00
-01/03/2024  Grocery Store         150.50   debit   1849.50
-01/10/2024  Online Shopping       100.00   debit   1749.50
-01/15/2024  Refund                50.00    credit  1799.50
-`;
-
-const extracted = extractBankStatementData(mockText);
-console.log(JSON.stringify(extracted, null, 2));
 
 interface CustomerDashboardProps {
   user: User;
@@ -88,7 +73,8 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ user }) =>
   const [currentFileName, setCurrentFileName] = useState<string>('');
   const [uploadType, setUploadType] = useState<'bank' | 'creditcard' | null>(null);
   const { processImage, isProcessing, progress } = useOCR();
-
+  const [rawOCRText, setRawOCRText] = useState("");
+  
   const handleFileSelect = async (file: File, type: 'bank' | 'creditcard') => {
     try {
       setUploadStatus('uploading');
@@ -103,9 +89,19 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ user }) =>
         await new Promise((resolve) => setTimeout(resolve, 3000));
         rawData = extractBankStatementData('');
       } else {
-        const result = await processImage(file);
-        rawData = extractBankStatementData(result.text);
-      }
+  const result = await processImage(file);
+  console.log("=== RAW OCR TEXT START ===");
+  console.log(result);
+  console.log("=== RAW OCR TEXT END ===");
+
+  if (type === 'bank') {
+    rawData = extractBankStatementData(result.text);
+  } else {
+    rawData = extractCreditCardStatementData(result.text);
+  }
+  setRawOCRText(result.text);
+}
+
 
       cleanedData = cleanExtractedData(rawData);
 
@@ -138,6 +134,10 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ user }) =>
    console.log('Extracted Data:',extractedData)
   return (
     <div>
+      <pre style={{ whiteSpace: "pre-wrap", background: "#f8f9fa", padding: "10px" }}>
+  {rawOCRText}
+</pre>
+
       <pre>{JSON.stringify(extractedData, null, 2)}</pre>
       {/* Welcome Section */}
       <div className="row mb-4">
