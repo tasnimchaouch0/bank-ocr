@@ -51,18 +51,16 @@ export const extractBankStatementData = (text: string): ExtractedData => {
 const extractBankName = (text: string): string | undefined => {
   const bankPattern = /^([A-Z].*BANK)/im;
   const match = text.match(bankPattern);
-  if (match) return match[1].trim();
-  return undefined;
+  return match?.[1]?.trim();
 };
 
 const extractAccountNumber = (text: string): string | undefined => {
   const match = text.match(/Primary Account\s*[:#]?\s*(\d{6,20})/i);
-  if (match) return match[1];
-  return undefined;
+  return match?.[1];
 };
 
 const extractStatementPeriod = (text: string): string | undefined => {
-  const match = text.match(/(\w+\s\d{1,2},\s\d{4})\s+(?:through|-|to)\s+(\w+\s\d{1,2},\s\d{4})/i);
+  const match = text.match(/(\w+\s\d{1,2},\s?\d{4})\s+(?:through|-|to)\s+(\w+\s\d{1,2},\s?\d{4})/i);
   if (match) {
     const start = formatDate(match[1]);
     const end = formatDate(match[2]);
@@ -73,7 +71,7 @@ const extractStatementPeriod = (text: string): string | undefined => {
 
 const formatDate = (str: string): string => {
   const dt = parse(str, "MMMM d, yyyy", new Date());
-  return isValid(dt) ? format(dt, "MM/dd/yyyy") : str;
+  return isValid(dt) ? format(dt, "yyyy-MM-dd") : str;
 };
 
 const extractSummary = (text: string) => {
@@ -104,7 +102,7 @@ const extractTransactions = (text: string): Transaction[] => {
 
   for (let i = headerIndex + 1; i < lines.length; i++) {
     const line = lines[i];
-    const pattern = /^([A-Za-z]{3,9}\s\d{1,2})\s+(.+?)\s+([\d,.]+)?\s*([\d,.]+)?\s*([\d,.]+)?$/;
+    const pattern = /^([A-Za-z]{3,9}\s\d{1,2})\s+(.+?)(?:\s+([\d,.]+))?(?:\s+([\d,.]+))?(?:\s+([\d,.]+))?$/;
     const match = line.match(pattern);
     if (match) {
       const [, dateStr, desc, withdrawal, deposit, balance] = match;
@@ -138,11 +136,12 @@ const extractTransactions = (text: string): Transaction[] => {
 };
 
 const parseTransactionDate = (str: string): string => {
-  // e.g. "Apr 10"
   const parsed = parse(str + ' 2018', 'MMM d yyyy', new Date());
-  return isValid(parsed) ? format(parsed, 'MM/dd/yyyy') : str;
+  return isValid(parsed) ? format(parsed, 'yyyy-MM-dd') : str;
 };
 
 const parseAmount = (s: string): number => {
-  return parseFloat(s.replace(/[,$]/g, ''));
+  if (!s) return 0;
+  const cleaned = s.replace(/\.(?=\d{3})/g, '').replace(/,/g, '');
+  return parseFloat(cleaned);
 };

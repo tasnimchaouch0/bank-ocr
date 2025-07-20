@@ -1,5 +1,4 @@
 import { useState, useCallback } from 'react';
-import { createWorker } from 'tesseract.js';
 
 interface OCRResult {
   text: string;
@@ -15,22 +14,39 @@ export const useOCR = () => {
     setProgress(0);
 
     try {
-      const worker = await createWorker('eng'); // v6 API: pass language here directly
+      const formData = new FormData();
+      formData.append('file', file);
 
-      const { data } = await worker.recognize(file); // only recognize() available in v6
+      setProgress(25);
 
-      await worker.terminate();
+      const response = await fetch('http://localhost:8000/process-ocr', {
+        method: 'POST',
+        body: formData,
+      });
+
+      setProgress(50);
+
+      const result = await response.json();
+
+      setProgress(75);
+
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      if (result.error) {
+        throw new Error(result.error);
+      }
+
+      setProgress(100);
 
       return {
-        text: data.text,
-        confidence: data.confidence,
+        text: result.text,
+        confidence: result.confidence || 1.0,
       };
     } catch (error) {
       console.error('OCR processing error:', error);
-      throw new Error('Failed to process image');
+      throw new Error(error instanceof Error ? error.message : 'Unknown error');
     } finally {
       setIsProcessing(false);
-      setProgress(100); // No progress API in v6 — we just set 100% at the end
     }
   }, []);
 
