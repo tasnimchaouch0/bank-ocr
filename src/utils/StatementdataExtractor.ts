@@ -25,57 +25,6 @@ export interface ExtractedData {
 }
 
 export const extractBankStatementData = (text: string): ExtractedData => {
-  text = `
-TECHOICE                                                                 July 1,2018 through July 31,2018
-                                                                       Primary Account: 00000958581485
-  JRMartin Choice Bank
-  West Virginia
-  PO Box 900180
- Country Roads WV 70826-0180
-                                                                     CUSTOMER SERVICE INFORMATION
-                                                                    WebSite:         www.choicebank.com
-                                                                     Service Center:       1-800-555-9935
-                                                                     Hearing Impaired:     1-800-555-7383
-                                                                     Para Espanol:         1-877-555-4273
-                                                                     International Calls   1-713-555-1679
-  00013422 DDA 001 LA 10206-YYNT 100000000 07 0000
-  Company Name                                                       Contact us by phone for questions, on this
-  Company Address                                                    statement, change information, and general
-  State, Zip                                                        inquiries, 24 hours a day, 7 days a week
- Account Summary
- Opening Balance                                            $5,234.09
- Withdrawals                                                $2,395.67
- Deposits                                                   $2,872.45
- Closing Balance on Apr 18,2010                             $9,710.87
- Your Transaction Details
- Date                    Details                      Withdrawals                   Deposits                 Balance
- Apr 8                  Opening Balance                                                                      5,234.09
- Apr 8                  Insurance                                                     272.45                 5,506.54
- Apr 10                 ATM                                 200.00                                           5,306.54
- Apr 12                 Internet Transfer                                             250.00                 5,556.54
- Apr 12                 Payroll                                                      2100.00                 7,656.54
- Apr 13                 Bill payment                        135.07                                           7,521.47
- Apr 14                 Direct debit                        200.00                                           7,321.47
- Apr 14                 Deposit                                                       250.00                 7.567.87
- Apr 15                 Bill payment                        525.72                                           7,042.15
- Apr 17                 Bill payment                        327.63                                           6,714.52
- Apr 17                 Bill payment                        729.96                                           5,984.56
- Apr 18                 Insurance                                                     272.45                 5,506.54
- Apr 18                 ATM                                 200.00                                           5,306.54
- Apr 18                 Internet Transfer                                             250.00                 5,556.54
- Apr 18                 Payroll                                                      2100.00                 7,656.54
- Apr 18                 Bill payment                        135.07                                           7,521.47
- Apr 19                 Direct debit                        200.00                                           7,321.47
- Apr 19                 Deposit                                                       250.00                 7.567.87
- Apr 19                  Bill payment                       525.72                                           7,042.15
- Apr 20                 Bill payment                        327.63                                           6,714.52
- Apr 20                  Bill payment                       729.96                                           5,984.56
- Apr 20                 Deposit                                                       250.00                 7.567.87
- Apr 20                 Bill payment                        525.72                                           7,042.15
- Apr 20                  Bill payment                       327.63                                           6,714.52
- Apr 21                  Bill payment                       729.96                                           5,984.56
-                        Closing Balance                                                                     $9,710.87
-`;
 
   console.log("Full OCR text:\n", text);
 

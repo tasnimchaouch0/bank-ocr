@@ -2,12 +2,31 @@ import React, { useState, useEffect } from 'react';
 import { AuthPage } from './components/auth/AuthPage';
 import { Dashboard } from './components/dashboard/Dashboard';
 import { apiService } from './services/api';
+import '@n8n/chat/style.css';
+import { createChat } from '@n8n/chat';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    // Initialize n8n chat
+    createChat({
+      webhookUrl: 'https://tasnimchaouch.app.n8n.cloud/webhook/e21e5d94-d8c6-4592-9f41-009a63c584d0/chat',
+    initialMessages: [
+		'Hi there! 👋 I am Tasnim welcome to bank ocr , How can I help you ? '
+	],
+i18n: {
+		en: {
+      title: 'Hi there! 👋',
+      subtitle: "Wanna know more about our page ?",
+      footer: '',
+      getStarted: 'New Conversation',
+      inputPlaceholder: 'Type here',
+      closeButtonTooltip: ''
+    },
+	},});
+
     // Check if user is already authenticated
     const checkAuth = async () => {
       if (apiService.isAuthenticated()) {
@@ -15,7 +34,6 @@ function App() {
           await apiService.getCurrentUser();
           setIsAuthenticated(true);
         } catch (error) {
-          // Token might be expired, clear it
           apiService.logout();
           setIsAuthenticated(false);
         }
