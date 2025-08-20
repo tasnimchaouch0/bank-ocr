@@ -1,22 +1,26 @@
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text, Float
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Text, Float, ForeignKey, text
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import relationship
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 import os
+import joblib
 from dotenv import load_dotenv
 from paddleocr import PaddleOCR
-import io
-from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import JSONResponse
-import shutil
-import os
+import pandas as pd
+from pathlib import Path
+from joblib import load
+import traceback
+import requests
+from sqlalchemy.orm import Session
 
 app = FastAPI()
 ocr = PaddleOCR(use_angle_cls=False, lang='en')  # Load only once
@@ -67,14 +71,29 @@ class User(Base):
     username = Column(String(255), unique=True, index=True, nullable=False)
     full_name = Column(String(255), nullable=False)
     hashed_password = Column(String(255), nullable=False)
+    age = Column(Integer, nullable=True)
+    gender = Column(String(50), nullable=True)
+    occupation = Column(String(255), nullable=True)
+    annual_income = Column(Float, nullable=True)
+    monthly_inhand_salary = Column(Float, nullable=True)
+    num_bank_accounts = Column(Integer, default=0)
+    num_credit_card = Column(Integer, default=0)
+    outstanding_debt = Column(Float, default=0.0)
+    credit_utilization_ratio = Column(Float, default=0.0)
+    payment_behaviour = Column(String(50), nullable=True)
+    payment_of_min_amount = Column(String(50), nullable=True)
+    credit_mix = Column(String(50), nullable=True)
+    total_emi_per_month = Column(Float, default=0.0)
     role = Column(String(50), default="customer")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    statement = relationship("BankStatement", back_populates="user", uselist=False)
+    transactions = relationship("Transaction", back_populates="user")
 
 class BankStatement(Base):
     __tablename__ = "bank_statements"
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     filename = Column(String(255), nullable=False)
     extracted_data = Column(Text, nullable=True)
     account_number = Column(String(100), nullable=True)
@@ -84,6 +103,33 @@ class BankStatement(Base):
     total_credits = Column(Float, default=0.0)
     total_debits = Column(Float, default=0.0)
     created_at = Column(DateTime, default=datetime.utcnow)
+    user = relationship("User", back_populates="statement")
+    transactions = relationship("Transaction", back_populates="bank_statement")
+
+class Transaction(Base):
+    __tablename__ = "transactions"
+    id = Column(Integer, primary_key=True, index=True)
+    bank_statement_id = Column(Integer, ForeignKey("bank_statements.id"), nullable=True)
+    customer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    date = Column(DateTime, nullable=False)
+    unix_time = Column(Float, nullable=True)
+    trans_hour = Column(Integer, nullable=True)
+    trans_day_of_week = Column(Integer, nullable=True)
+    merchant = Column(String(255), nullable=True)
+    amount = Column(Float, nullable=False)
+    category = Column(String(255), nullable=True)
+    city = Column(String(255), nullable=True)
+    state = Column(String(255), nullable=True)
+    zip_code = Column(String(50), nullable=True)
+    lat = Column(Float, nullable=True)       
+    long = Column(Float, nullable=True)       
+    merch_lat = Column(Float, nullable=True)   
+    merch_long = Column(Float, nullable=True)  
+    city_pop = Column(Integer, nullable=True)  
+    fraud_score = Column(Float, nullable=True)
+
+    user = relationship("User", back_populates="transactions")
+    bank_statement = relationship("BankStatement", back_populates="transactions")
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -145,6 +191,11 @@ class OCRResult(BaseModel):
     text: str
     confidence: float
 
+# Load fraud model once
+MODEL_PATH = "../src/models/random_forest.pkl"
+fraud_model = joblib.load(MODEL_PATH)
+preprocessor = joblib.load("../src/models/preprocessor.pkl")
+X_train_columns = joblib.load("../src/models/X_train_columns.pkl")
 # DB Dependency
 def get_db():
     db = SessionLocal()
@@ -237,6 +288,60 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Fraud prediction endpoint
+@app.get("/fraud/predict/{transaction_id}")
+def predict_transaction(transaction_id: int, db: Session = Depends(get_db)):
+    # Fetch transaction
+    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    
+    # Fetch linked user (for gender & occupation)
+    user = db.query(User).filter(User.id == tx.customer_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Prepare features for ML model
+    features = {
+        "merchant": tx.merchant,
+        "category": tx.category,
+        "city": tx.city,
+        "state": tx.state,
+        "zip_code": tx.zip_code,
+        "lat": tx.lat,
+        "long": tx.long,
+        "city_pop": tx.city_pop,
+        "unix_time": tx.unix_time,
+        "merch_lat": tx.merch_lat,
+        "merch_long": tx.merch_long,
+        "trans_hour": tx.trans_hour,
+        "trans_day_of_week": tx.trans_day_of_week,
+        "amt": tx.amount,
+        "gender": getattr(user, "gender", None),
+        "occupation": getattr(user, "occupation", None)
+    }
+
+    df = pd.DataFrame([features])
+
+    # --- Preprocess categorical features like during training ---
+    categorical_cols = ["merchant", "category", "city", "state", "zip_code", "gender", "occupation"]
+    df_encoded = pd.get_dummies(df, columns=categorical_cols)
+
+    # Ensure columns match training data
+    df_encoded = df_encoded.reindex(columns=X_train_columns, fill_value=0)  # X_train_columns = list of columns from training
+
+    # Predict fraud probability
+    fraud_score = fraud_model.predict_proba(df_encoded)[:, 1][0]  # probability fraud
+
+    return {
+        "transaction_id": tx.id,
+        "customer_id": tx.customer_id,
+        "merchant": tx.merchant,
+        "amount": tx.amount,
+        "fraud_score": float(fraud_score),
+        "is_fraudulent": bool(fraud_score > 0.5)
+    }
 
 @app.post("/process-ocr")
 async def process_ocr(file: UploadFile = File(...)):
