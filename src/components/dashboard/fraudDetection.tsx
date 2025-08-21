@@ -17,7 +17,7 @@ export const FraudDetection: React.FC = () => {
         const data = await apiService.getAllTransactions();
 
         const transactionsWithFraud: TransactionWithFraud[] = await Promise.all(
-          data.map(async (tx) => {
+          data.map(async (tx: { id: number; }) => {
             try {
               const fraud = await apiService.predictFraud(tx.id);
               return {

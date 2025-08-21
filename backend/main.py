@@ -103,6 +103,9 @@ class BankStatement(Base):
     total_credits = Column(Float, default=0.0)
     total_debits = Column(Float, default=0.0)
     created_at = Column(DateTime, default=datetime.utcnow)
+    credit_score_label = Column(Integer, nullable=True)  
+    credit_score_probability = Column(Float, nullable=True)  
+
     user = relationship("User", back_populates="statement")
     transactions = relationship("Transaction", back_populates="bank_statement")
 
@@ -314,6 +317,44 @@ def update_statement(
     db.commit()
     db.refresh(db_statement)
     return db_statement
+@app.get("/fraud/predict/{transaction_id}")
+def predict_fraud(transaction_id: int, db: Session = Depends(get_db)):
+    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    # Example dummy fraud model
+    fraud_score = float(tx.amount) / 1000  # normalize
+    is_fraudulent = fraud_score > 0.7
+
+    return {
+        "fraud_score": fraud_score,
+        "is_fraudulent": is_fraudulent,
+    }
+from fastapi import Depends, HTTPException
+from sqlalchemy.orm import Session
+from typing import List
+
+@app.get("/admin/transactions")
+def get_all_transactions(db: Session = Depends(get_db)):
+    transactions = db.query(Transaction).all()
+
+    return [
+        {
+            "id": tx.id,
+            "amount": tx.amount,
+            "merchant": tx.merchant,
+            "category": tx.category,
+            "date": tx.date,
+            "customer": {
+                "id": tx.user.id if tx.user else None,
+                "full_name": tx.user.full_name if tx.user else "Unknown",
+                "email": tx.user.email if tx.user else "Unknown",
+            }
+        }
+        for tx in transactions
+    ]
+
 # Fraud prediction endpoint
 @app.get("/fraud/predict/{transaction_id}")
 def predict_transaction(transaction_id: int, db: Session = Depends(get_db)):
