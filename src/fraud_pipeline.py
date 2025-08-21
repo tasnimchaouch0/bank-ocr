@@ -105,6 +105,7 @@ def main():
     print("Legitimate Cases in Train:", len(train_data[train_data['is_fraud'] == 0]))
     print("\nTest Data Shape:", test_data.shape)
 
+
     # Preprocess
     train_data, test_data = preprocess_data(train_data, test_data)
 

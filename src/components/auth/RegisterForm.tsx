@@ -142,27 +142,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({ onSuccess, onSwitchT
             </div>
           </div>
 
-          <div className="mb-3">
-            <label htmlFor="role" className="form-label fw-medium">
-              Account Type
-            </label>
-            <div className="input-group">
-              <span className="input-group-text bg-light border-end-0">
-                <i className="bi bi-shield text-muted"></i>
-              </span>
-              <select
-                className="form-select border-start-0"
-                id="role"
-                name="role"
-                value={formData.role}
-                onChange={handleChange}
-                required
-              >
-                <option value="customer">Customer</option>
-                <option value="admin">Administrator</option>
-              </select>
-            </div>
-          </div>
+          
 
           <div className="row">
             <div className="col-md-6 mb-3">

@@ -164,79 +164,79 @@ export const ExtractedData: React.FC<ExtractedDataProps> = ({ data }) => {
       </div>
 
       {/* Summary Cards */}
-      <div className="row g-4 mb-4">
-        <div className="col-md-3">
-          <div className="card border-0 shadow-sm h-100">
-            <div className="card-body">
-              <div className="d-flex justify-content-between align-items-start">
-                <div>
-                  <p className="text-muted small mb-1">Total Credits</p>
-                  <h4 className="text-success fw-bold mb-0">
-                    ${data.summary.totalCredits.toFixed(2)}
-                  </h4>
-                </div>
-                <div className="bg-success bg-opacity-10 rounded p-2">
-                  <i className="bi bi-arrow-up-circle text-success fs-5"></i>
-                </div>
-              </div>
-            </div>
+      <div className="row g-3 mb-4">
+  <div className="col-md-3">
+    <div className="card border-0 shadow-sm h-100">
+      <div className="card-body p-2">
+        <div className="d-flex justify-content-between align-items-start">
+          <div>
+            <p className="text-muted small mb-1" style={{ fontSize: '0.75rem' }}>Total Credits</p>
+            <h4 className="text-success fw-bold mb-0" style={{ fontSize: '1.25rem' }}>
+              ${data.summary.totalCredits.toFixed(2)}
+            </h4>
           </div>
-        </div>
-
-        <div className="col-md-3">
-          <div className="card border-0 shadow-sm h-100">
-            <div className="card-body">
-              <div className="d-flex justify-content-between align-items-start">
-                <div>
-                  <p className="text-muted small mb-1">Total Debits</p>
-                  <h4 className="text-danger fw-bold mb-0">
-                    ${data.summary.totalDebits.toFixed(2)}
-                  </h4>
-                </div>
-                <div className="bg-danger bg-opacity-10 rounded p-2">
-                  <i className="bi bi-arrow-down-circle text-danger fs-5"></i>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="col-md-3">
-          <div className="card border-0 shadow-sm h-100">
-            <div className="card-body">
-              <div className="d-flex justify-content-between align-items-start">
-                <div>
-                  <p className="text-muted small mb-1">Opening Balance</p>
-                  <h4 className="text-dark fw-bold mb-0">
-                    ${data.summary.openingBalance.toFixed(2)}
-                  </h4>
-                </div>
-                <div className="bg-primary bg-opacity-10 rounded p-2">
-                  <i className="bi bi-wallet text-primary fs-5"></i>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="col-md-3">
-          <div className="card border-0 shadow-sm h-100">
-            <div className="card-body">
-              <div className="d-flex justify-content-between align-items-start">
-                <div>
-                  <p className="text-muted small mb-1">Transactions</p>
-                  <h4 className="text-dark fw-bold mb-0">
-                    {data.transactions.length}
-                  </h4>
-                </div>
-                <div className="bg-info bg-opacity-10 rounded p-2">
-                  <i className="bi bi-list-ul text-info fs-5"></i>
-                </div>
-              </div>
-            </div>
+          <div className="bg-success bg-opacity-10 rounded p-1" style={{ lineHeight: 1 }}>
+            <i className="fas fa-circle-arrow-up text-success" style={{ fontSize: '1rem', display: 'inline-block', fontFamily: '"Font Awesome 6 Free"' }}></i>
           </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div className="col-md-3">
+    <div className="card border-0 shadow-sm h-100">
+      <div className="card-body p-2">
+        <div className="d-flex justify-content-between align-items-start">
+          <div>
+            <p className="text-muted small mb-1" style={{ fontSize: '0.75rem' }}>Total Debits</p>
+            <h4 className="text-danger fw-bold mb-0" style={{ fontSize: '1.25rem' }}>
+              ${data.summary.totalDebits.toFixed(2)}
+            </h4>
+          </div>
+          <div className="bg-danger bg-opacity-10 rounded p-1" style={{ lineHeight: 1 }}>
+            <i className="fas fa-circle-arrow-down text-danger" style={{ fontSize: '1rem', display: 'inline-block', fontFamily: '"Font Awesome 6 Free"' }}></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div className="col-md-3">
+    <div className="card border-0 shadow-sm h-100">
+      <div className="card-body p-2">
+        <div className="d-flex justify-content-between align-items-start">
+          <div>
+            <p className="text-muted small mb-1" style={{ fontSize: '0.75rem' }}>Opening Balance</p>
+            <h4 className="text-dark fw-bold mb-0" style={{ fontSize: '1.25rem' }}>
+              ${data.summary.openingBalance.toFixed(2)}
+            </h4>
+          </div>
+          <div className="bg-primary bg-opacity-10 rounded p-1" style={{ lineHeight: 1 }}>
+            <i className="fas fa-wallet text-primary" style={{ fontSize: '1rem', display: 'inline-block', fontFamily: '"Font Awesome 6 Free"' }}></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div className="col-md-3">
+    <div className="card border-0 shadow-sm h-100">
+      <div className="card-body p-2">
+        <div className="d-flex justify-content-between align-items-start">
+          <div>
+            <p className="text-muted small mb-1" style={{ fontSize: '0.75rem' }}>Transactions</p>
+            <h4 className="text-dark fw-bold mb-0" style={{ fontSize: '1.25rem' }}>
+              {data.transactions.length}
+            </h4>
+          </div>
+          <div className="bg-info bg-opacity-10 rounded p-1" style={{ lineHeight: 1 }}>
+            <i className="fas fa-list-ul text-info" style={{ fontSize: '1rem', display: 'inline-block', fontFamily: '"Font Awesome 6 Free"' }}></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
       {/* Transactions Table */}
       <div className="card border-0 shadow-sm">

@@ -132,11 +132,11 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ user }) =>
    console.log('Extracted Data:',extractedData)
   return (
     <div>
-      <pre style={{ whiteSpace: "pre-wrap", background: "#f8f9fa", padding: "10px" }}>
+      {/*<pre style={{ whiteSpace: "pre-wrap", background: "#f8f9fa", padding: "10px" }}>
   {rawOCRText}
 </pre>
 
-      <pre>{JSON.stringify(extractedData, null, 2)}</pre>
+      <pre>{JSON.stringify(extractedData, null, 2)}</pre>*/}
       {/* Welcome Section */}
       <div className="row mb-4">
         <div className="col-12">
@@ -150,11 +150,6 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ user }) =>
                   <p className="mb-0 opacity-90">
                     Upload your statements or credit card data to extract information automatically.
                   </p>
-                </div>
-                <div className="col-md-4 text-md-end">
-                  <div className="bg-white bg-opacity-20 rounded p-3 d-inline-block">
-                    <i className="bi bi-file-earmark-text fs-1"></i>
-                  </div>
                 </div>
               </div>
             </div>

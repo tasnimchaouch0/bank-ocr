@@ -95,11 +95,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
                     Manage users, monitor system activity, and oversee bank statement processing.
                   </p>
                 </div>
-                <div className="col-md-4 text-md-end">
-                  <div className="bg-white bg-opacity-20 rounded p-3 d-inline-block">
-                    <i className="bi bi-gear fs-1"></i>
-                  </div>
-                </div>
+                
               </div>
             </div>
           </div>
@@ -244,7 +240,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
                       <th>Role</th>
                       <th>Status</th>
                       <th>Joined</th>
-                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -264,15 +259,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ user }) => {
                           </span>
                         </td>
                         <td>{new Date(u.created_at).toLocaleDateString()}</td>
-                        <td>
-                          <button
-                            className={`btn btn-sm ${u.is_active ? 'btn-outline-danger' : 'btn-outline-success'}`}
-                            onClick={() => handleToggleUserStatus(u.id)}
-                            disabled={u.id === user.id} // Can't disable own account
-                          >
-                            {u.is_active ? 'Deactivate' : 'Activate'}
-                          </button>
-                        </td>
+                        
                       </tr>
                     ))}
                   </tbody>

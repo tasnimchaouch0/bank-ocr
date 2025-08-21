@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { apiService, type User } from '../../services/api';
 import { CustomerDashboard } from './CustomerDashboard';
 import { AdminDashboard } from './AdminDashboard';
-
+import { Link } from 'react-router-dom';
 interface DashboardProps {
   onLogout: () => void;
 }
@@ -23,7 +23,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
         setIsLoading(false);
       }
     };
-
     loadUser();
   }, [onLogout]);
 
@@ -60,20 +59,47 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
               <i className="bi bi-bank text-white fs-4"></i>
             </div>
             <div>
-              <h1 className="h4 mb-0 fw-bold text-dark">BankOCR Pro</h1>
+              <h1 className="h4 mb-0 fw-bold text-dark">BankOCR</h1>
               <small className="text-muted">
                 {user.role === 'admin' ? 'Admin Dashboard' : 'Customer Portal'}
               </small>
             </div>
           </div>
           
-          <div className="d-flex align-items-center">
+          <div className="d-flex align-items-center w-100">
+            {/* Navigation Links */}
+            {user.role === 'admin' ? (
+              <ul className="navbar-nav me-auto mb-2 mb-lg-0">
+                <li className="nav-item">
+                  <Link className="nav-link active" to="/customers">Customers</Link>
+                </li>
+                <li className="nav-item">
+                  <Link className="nav-link active" to="/admins">Admins</Link>
+                </li>
+                <li className="nav-item">
+                  <Link className="nav-link active" to="/fraudDetection">Fraud Detection</Link>
+                </li>
+              </ul>
+            ) : (
+              <ul className="navbar-nav me-auto mb-2 mb-lg-0">
+                {/*<li className="nav-item">
+                  <Link className="nav-link active" to="/creditScoring">Credit Card</Link>
+                </li>*/}
+                <li className="nav-item"> 
+                  <Link className="nav-link active" to="/bankStatement">Bank Statement</Link>
+
+                </li>
+                <li className="nav-item">
+                  <Link className="nav-link active" to="/CreditScoring">Credit Scoring</Link>
+                </li>
+              </ul>
+            )}
+            
             {/* User Info */}
             <div className="me-3 text-end d-none d-md-block">
               <div className="fw-medium text-dark">{user.full_name}</div>
               <small className="text-muted">{user.email}</small>
             </div>
-
             {/* User Avatar & Dropdown */}
             <div className="dropdown">
               <button
@@ -126,10 +152,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                 </li>
                 <li><hr className="dropdown-divider" /></li>
                 <li>
-                  <button 
-                    className="dropdown-item text-danger d-flex align-items-center" 
-                    onClick={handleLogout}
-                  >
+                  <button className="dropdown-item text-danger d-flex align-items-center" onClick={handleLogout}>
                     <i className="bi bi-box-arrow-right me-2"></i>
                     Logout
                   </button>
@@ -139,7 +162,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
           </div>
         </div>
       </nav>
-
       {/* Dashboard Content */}
       <div className="container py-4">
         {user.role === 'admin' ? (

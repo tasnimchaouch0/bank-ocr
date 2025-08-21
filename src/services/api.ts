@@ -30,6 +30,7 @@ interface AuthResponse {
 }
 
 interface BankStatementData {
+  id?: number;
   filename: string;
   extracted_data: string;
   account_number?: string;
@@ -40,12 +41,33 @@ interface BankStatementData {
   total_debits?: number;
 }
 
+// 👇 Add transaction & fraud types
+export interface Customer {
+  id: number;
+  full_name: string;
+  email: string;
+}
+
+export interface Transaction {
+  id: number;
+  date: string;
+  amount: number;
+  merchant?: string;
+  category?: string;
+  customer: Customer;
+}
+
+export interface FraudPrediction {
+  fraud_score: number;
+  is_fraudulent: boolean;
+}
+
 class ApiService {
   private getAuthHeaders() {
     const token = localStorage.getItem('access_token');
     return {
       'Content-Type': 'application/json',
-      ...(token && { 'Authorization': `Bearer ${token}` })
+      ...(token && { Authorization: `Bearer ${token}` }),
     };
   }
 
@@ -186,28 +208,35 @@ class ApiService {
 
     return response.json();
   }
+async updateBankStatement(id: number, data: Partial<BankStatementData>) {
+  const response = await fetch(`${API_BASE_URL}/statements/${id}`, {
+    method: 'PUT',
+    headers: this.getAuthHeaders(),
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to update bank statement');
+  }
+
+  return response.json();
+}
 
   logout() {
-    // Clear all authentication data
     localStorage.removeItem('access_token');
     localStorage.removeItem('user');
-    
-    // Optional: You could also call a backend logout endpoint here
-    // to invalidate the token on the server side
     console.log('User logged out successfully');
   }
 
   isAuthenticated(): boolean {
     const token = localStorage.getItem('access_token');
     if (!token) return false;
-    
-    // Optional: Check if token is expired
+
     try {
       const payload = JSON.parse(atob(token.split('.')[1]));
       const currentTime = Date.now() / 1000;
       return payload.exp > currentTime;
     } catch (error) {
-      // If token is malformed, consider it invalid
       return false;
     }
   }
@@ -216,7 +245,38 @@ class ApiService {
     const userStr = localStorage.getItem('user');
     return userStr ? JSON.parse(userStr) : null;
   }
+
+  // 👇 Added methods for FraudDetection.tsx
+  async getAllTransactions(): Promise<Transaction[]> {
+    const response = await fetch(`${API_BASE_URL}/transactions`, {
+      headers: this.getAuthHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch transactions');
+    }
+
+    return response.json();
+  }
+
+  async predictFraud(transactionId: number): Promise<FraudPrediction> {
+    const response = await fetch(`${API_BASE_URL}/transactions/${transactionId}/fraud-prediction`, {
+      headers: this.getAuthHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch fraud prediction');
+    }
+
+    return response.json();
+  }
 }
 
 export const apiService = new ApiService();
-export type { User, AuthResponse, LoginCredentials, RegisterData, BankStatementData };
+export type { 
+  User, 
+  AuthResponse, 
+  LoginCredentials, 
+  RegisterData, 
+  BankStatementData, 
+};

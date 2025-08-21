@@ -12,7 +12,6 @@ from datetime import datetime, timedelta
 from pydantic import BaseModel, EmailStr
 from typing import Optional, List
 import os
-import joblib
 from dotenv import load_dotenv
 from paddleocr import PaddleOCR
 import pandas as pd
@@ -20,50 +19,56 @@ from pathlib import Path
 from joblib import load
 import traceback
 import requests
-from sqlalchemy.orm import Session
 
-app = FastAPI()
+# ---------------- App init ----------------
+app = FastAPI(title="Bank OCR API", version="1.0.0")
 ocr = PaddleOCR(use_angle_cls=False, lang='en')  # Load only once
 
+BASE_DIR = Path(__file__).resolve().parent  # points to backend/
 
-# Load environment variables
+fraud_model = load(BASE_DIR.parent / "src" / "models" / "random_forest.pkl")
+preprocessor = load(BASE_DIR.parent / "src" / "models" / "preprocessor.pkl")
+
+# ---------------- Env + DB ----------------
 load_dotenv()
-
-# Database settings
 DB_USER = os.getenv("DB_USER")
 DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "3306")
 DB_NAME = os.getenv("DB_NAME")
 
-# SQLAlchemy URL for MySQL using PyMySQL driver
 SQLALCHEMY_DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+DATABASE_URL = f"mysql+aiomysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-# SQLAlchemy setup
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# Security settings
+# Async engine + session
+async_engine = create_async_engine(DATABASE_URL, echo=False, future=True)
+AsyncSessionLocal = sessionmaker(async_engine, class_=AsyncSession, expire_on_commit=False)
+
+# ---------------- Startup ----------------
+@app.on_event("startup")
+async def init_models():
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+# ---------------- CORS ----------------
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],   # loosened for dev
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------------- Security ----------------
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
-# FastAPI app
-app = FastAPI(title="Bank OCR API", version="1.0.0")
-
-# CORS configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "https://radiant-pika-d2d030.netlify.app"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Models
+# ---------------- Models ----------------
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
@@ -131,78 +136,71 @@ class Transaction(Base):
     user = relationship("User", back_populates="transactions")
     bank_statement = relationship("BankStatement", back_populates="transactions")
 
-# Create tables
-Base.metadata.create_all(bind=engine)
+# ---------------- DB Dependency ----------------
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        yield session
 
-# Schemas
-class UserCreate(BaseModel):
-    email: EmailStr
-    username: str
-    full_name: str
-    password: str
-    role: Optional[str] = "customer"
+# --- Fraud scoring logic ---
+async def fetch_and_score(db: AsyncSession, condition: str = ""):
+    query = """
+        SELECT 
+            t.id,
+            t.customer_id,
+            t.merchant,
+            t.category,
+            t.amount,
+            t.city,
+            t.state,
+            t.zip_code,
+            t.lat,
+            t.long,
+            t.city_pop,
+            t.unix_time,
+            t.merch_lat,
+            t.merch_long,
+            t.trans_hour,
+            t.trans_day_of_week,
+            u.gender,
+            u.occupation
+        FROM transactions t
+        JOIN users u ON t.customer_id = u.id
+    """
+    if condition:
+        query += f" WHERE {condition}"
 
-class UserLogin(BaseModel):
-    username: str
-    password: str
+    result = await db.execute(text(query))
+    rows = result.mappings().all()
 
-class UserResponse(BaseModel):
-    id: int
-    email: str
-    username: str
-    full_name: str
-    role: str
-    is_active: bool
-    created_at: datetime
-    class Config:
-        orm_mode = True
+    if not rows:
+        return None
 
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-    user: UserResponse
+    df = pd.DataFrame(rows)
 
-class BankStatementCreate(BaseModel):
-    filename: str
-    extracted_data: str
-    account_number: Optional[str] = None
-    account_holder: Optional[str] = None
-    bank_name: Optional[str] = None
-    statement_period: Optional[str] = None
-    total_credits: Optional[float] = 0.0
-    total_debits: Optional[float] = 0.0
+    # ✅ Rename columns to match training features
+    df = df.rename(columns={
+        "amount": "amt",
+        "zip_code": "zip",
+        "occupation": "job"
+    })
 
-class BankStatementResponse(BaseModel):
-    id: int
-    user_id: int
-    filename: str
-    extracted_data: str
-    account_number: Optional[str]
-    account_holder: Optional[str]
-    bank_name: Optional[str]
-    statement_period: Optional[str]
-    total_credits: float
-    total_debits: float
-    created_at: datetime
-    class Config:
-        orm_mode = True
+    # ✅ Features as used in fraud_pipeline.py
+    features = [
+        "merchant", "category", "amt", "gender", "city", "state", "zip",
+        "lat", "long", "city_pop", "job", "unix_time",
+        "merch_lat", "merch_long", "trans_hour", "trans_day_of_week"
+    ]
 
-class OCRResult(BaseModel):
-    text: str
-    confidence: float
+    X = df[features]
+    X_processed = preprocessor.transform(X)
 
-# Load fraud model once
-MODEL_PATH = "../src/models/random_forest.pkl"
-fraud_model = joblib.load(MODEL_PATH)
-preprocessor = joblib.load("../src/models/preprocessor.pkl")
-X_train_columns = joblib.load("../src/models/X_train_columns.pkl")
-# DB Dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    # ✅ Predict fraud scores
+    scores = fraud_model.predict_proba(X_processed)[:, 1]
+    df["fraud_score"] = scores
+
+    return df[["id", "customer_id", "merchant", "amt", "fraud_score"]].to_dict(orient="records")
+
+
 
 # Utils
 def verify_password(plain_password, hashed_password):
@@ -279,7 +277,6 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 import requests
 
-app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
@@ -288,87 +285,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-@app.get("/statements/me", response_model=BankStatementResponse)
-def get_user_statement(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    statement = db.query(BankStatement).filter(BankStatement.user_id == current_user.id).first()
-    if not statement:
-        raise HTTPException(status_code=404, detail="No bank statement found for this user")
-    return statement
-@app.put("/statements/{statement_id}", response_model=BankStatementResponse)
-def update_statement(
-    statement_id: int,
-    statement: BankStatementCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    db_statement = db.query(BankStatement).filter(
-        BankStatement.id == statement_id,
-        BankStatement.user_id == current_user.id
-    ).first()
-    if not db_statement:
-        raise HTTPException(status_code=404, detail="Statement not found")
-    
-    for key, value in statement.dict().items():
-        setattr(db_statement, key, value)
-    
-    db.commit()
-    db.refresh(db_statement)
-    return db_statement
-# Fraud prediction endpoint
-@app.get("/fraud/predict/{transaction_id}")
-def predict_transaction(transaction_id: int, db: Session = Depends(get_db)):
-    # Fetch transaction
-    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
-    if not tx:
+@app.on_event("startup")
+async def init_models():
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+@app.get("/transactions/{transaction_id}/fraud_score")
+async def get_transaction_fraud_score(transaction_id: int, db: AsyncSession = Depends(get_db)):
+    result = await fetch_and_score(db, f"t.id={transaction_id}")
+    if not result:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    
-    # Fetch linked user (for gender & occupation)
-    user = db.query(User).filter(User.id == tx.customer_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    # Prepare features for ML model
-    features = {
-        "merchant": tx.merchant,
-        "category": tx.category,
-        "city": tx.city,
-        "state": tx.state,
-        "zip_code": tx.zip_code,
-        "lat": tx.lat,
-        "long": tx.long,
-        "city_pop": tx.city_pop,
-        "unix_time": tx.unix_time,
-        "merch_lat": tx.merch_lat,
-        "merch_long": tx.merch_long,
-        "trans_hour": tx.trans_hour,
-        "trans_day_of_week": tx.trans_day_of_week,
-        "amt": tx.amount,
-        "gender": getattr(user, "gender", None),
-        "occupation": getattr(user, "occupation", None)
-    }
-
-    df = pd.DataFrame([features])
-
-    # --- Preprocess categorical features like during training ---
-    categorical_cols = ["merchant", "category", "city", "state", "zip_code", "gender", "occupation"]
-    df_encoded = pd.get_dummies(df, columns=categorical_cols)
-
-    # Ensure columns match training data
-    df_encoded = df_encoded.reindex(columns=X_train_columns, fill_value=0)  # X_train_columns = list of columns from training
-
-    # Predict fraud probability
-    fraud_score = fraud_model.predict_proba(df_encoded)[:, 1][0]  # probability fraud
-
-    return {
-        "transaction_id": tx.id,
-        "customer_id": tx.customer_id,
-        "merchant": tx.merchant,
-        "amount": tx.amount,
-        "fraud_score": float(fraud_score),
-        "is_fraudulent": bool(fraud_score > 0.5)
-    }
+    return result[0]
 
 
+@app.get("/customers/{customer_id}/fraud_scores")
+async def get_customer_fraud_scores(customer_id: int, db: AsyncSession = Depends(get_db)):
+    result = await fetch_and_score(db, f"t.customer_id={customer_id}")
+    if not result:
+        raise HTTPException(status_code=404, detail="No transactions found for this customer")
+    return result
+@app.post("/predict_fraud")
+def predict(transaction: TransactionSchema):
+    features = preprocess_input(transaction)
+    prediction = model.predict([features])
+    return {"fraud": bool(prediction[0])}
 @app.post("/process-ocr")
 async def process_ocr(file: UploadFile = File(...)):
     try:
