@@ -103,9 +103,6 @@ class BankStatement(Base):
     total_credits = Column(Float, default=0.0)
     total_debits = Column(Float, default=0.0)
     created_at = Column(DateTime, default=datetime.utcnow)
-    credit_score_label = Column(Integer, nullable=True)  
-    credit_score_probability = Column(Float, nullable=True)  
-
     user = relationship("User", back_populates="statement")
     transactions = relationship("Transaction", back_populates="bank_statement")
 
@@ -246,23 +243,23 @@ async def process_with_paddleocr(file: UploadFile) -> OCRResult:
     try:
         # Read file content
         content = await file.read()
-        
+
         # Save file temporarily if needed
         temp_file_path = f"temp_{file.filename}"
         with open(temp_file_path, "wb") as f:
             f.write(content)
-        
+
         # Process with PaddleOCR
         result = ocr.ocr(temp_file_path, cls=True)
         print("🔍 OCR raw result:", result) 
         # Clean up temporary file
         os.remove(temp_file_path)
-        
+
         # Extract text from PaddleOCR result
         extracted_text = ""
         total_confidence = 0
         count = 0
-        
+
         for line in result:
             for item in line:
                 text = item[1][0]  # Extracted text
@@ -270,9 +267,9 @@ async def process_with_paddleocr(file: UploadFile) -> OCRResult:
                 extracted_text += text + "\n"
                 total_confidence += confidence
                 count += 1
-        
+
         avg_confidence = total_confidence / count if count > 0 else 0
-        
+
         return OCRResult(text=extracted_text, confidence=avg_confidence)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OCR processing failed: {str(e)}")
@@ -317,43 +314,52 @@ def update_statement(
     db.commit()
     db.refresh(db_statement)
     return db_statement
-@app.get("/fraud/predict/{transaction_id}")
-def predict_fraud(transaction_id: int, db: Session = Depends(get_db)):
-    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
-    if not tx:
-        raise HTTPException(status_code=404, detail="Transaction not found")
-
-    # Example dummy fraud model
-    fraud_score = float(tx.amount) / 1000  # normalize
-    is_fraudulent = fraud_score > 0.7
-
-    return {
-        "fraud_score": fraud_score,
-        "is_fraudulent": is_fraudulent,
-    }
-from fastapi import Depends, HTTPException
-from sqlalchemy.orm import Session
-from typing import List
-
-@app.get("/admin/transactions")
-def get_all_transactions(db: Session = Depends(get_db)):
+@app.get("/admin/predict/transactions")
+def predict_all_transactions(db: Session = Depends(get_db)):
     transactions = db.query(Transaction).all()
+    results = []
 
-    return [
-        {
-            "id": tx.id,
-            "amount": tx.amount,
+    for tx in transactions:
+        user = db.query(User).filter(User.id == tx.customer_id).first()
+        features = {
             "merchant": tx.merchant,
             "category": tx.category,
-            "date": tx.date,
-            "customer": {
-                "id": tx.user.id if tx.user else None,
-                "full_name": tx.user.full_name if tx.user else "Unknown",
-                "email": tx.user.email if tx.user else "Unknown",
-            }
+            "city": tx.city,
+            "state": tx.state,
+            "zip_code": tx.zip_code,
+            "lat": tx.lat,
+            "long": tx.long,
+            "city_pop": tx.city_pop,
+            "unix_time": tx.unix_time,
+            "merch_lat": tx.merch_lat,
+            "merch_long": tx.merch_long,
+            "trans_hour": tx.trans_hour,
+            "trans_day_of_week": tx.trans_day_of_week,
+            "amt": tx.amount,
+            "gender": getattr(user, "gender", None),
+            "occupation": getattr(user, "occupation", None)
         }
-        for tx in transactions
-    ]
+
+        df = pd.DataFrame([features])
+
+        # Encode categoricals same as training
+        categorical_cols = ["merchant", "category", "city", "state", "zip_code", "gender", "occupation"]
+        df_encoded = pd.get_dummies(df, columns=categorical_cols)
+        df_encoded = df_encoded.reindex(columns=X_train_columns, fill_value=0)
+
+        fraud_score = fraud_model.predict_proba(df_encoded)[:, 1][0]
+
+        results.append({
+            "id": tx.id,
+            "customer_full_name": user.full_name,
+            "customer_mail":user.email,
+            "merchant": tx.merchant,
+            "amount": tx.amount,
+            "fraud_score": float(fraud_score),
+            "is_fraudulent": bool(fraud_score > 0.5)
+        })
+
+    return results
 
 # Fraud prediction endpoint
 @app.get("/fraud/predict/{transaction_id}")
@@ -362,12 +368,12 @@ def predict_transaction(transaction_id: int, db: Session = Depends(get_db)):
     tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    
+
     # Fetch linked user (for gender & occupation)
     user = db.query(User).filter(User.id == tx.customer_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     # Prepare features for ML model
     features = {
         "merchant": tx.merchant,
@@ -567,4 +573,3 @@ async def process_image(file: UploadFile = File(...), current_user: dict = Depen
 
     except Exception as e:
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

@@ -15,24 +15,8 @@ export const FraudDetection: React.FC = () => {
       try {
         setError(null);
         const data = await apiService.getAllTransactions();
-
-        const transactionsWithFraud: TransactionWithFraud[] = await Promise.all(
-          data.map(async (tx: { id: number; }) => {
-            try {
-              const fraud = await apiService.predictFraud(tx.id);
-              return {
-                ...tx,
-                fraud_score: fraud.fraud_score,
-                is_fraudulent: fraud.is_fraudulent,
-              };
-            } catch (err) {
-              console.error("Fraud prediction failed for transaction", tx.id, err);
-              return tx;
-            }
-          })
-        );
-
-        setTransactions(transactionsWithFraud);
+        console.log("data",data)
+        setTransactions(data);
       } catch (err: any) {
         console.error("Failed to fetch transactions:", err);
         setError("Failed to fetch transactions");
@@ -55,6 +39,12 @@ export const FraudDetection: React.FC = () => {
   return (
     <div className="container mt-4">
       <h2>Fraud Detection - Transactions</h2>
+
+      {/* Back button */}
+      <button className="btn btn-secondary mb-3" onClick={() => window.history.back()}>
+        ← Back
+      </button>
+
       {transactions.length === 0 ? (
         <p>No transactions available</p>
       ) : (
@@ -76,8 +66,8 @@ export const FraudDetection: React.FC = () => {
             {transactions.map((tx) => (
               <tr key={tx.id}>
                 <td>{tx.id}</td>
-                <td>{tx.customer.full_name}</td>
-                <td>{tx.customer.email}</td>
+                <td>{tx.customer_full_name}</td>
+                <td>{tx.customer_mail}</td>
                 <td>${tx.amount.toFixed(2)}</td>
                 <td>{tx.merchant || "-"}</td>
                 <td>{tx.category || "-"}</td>

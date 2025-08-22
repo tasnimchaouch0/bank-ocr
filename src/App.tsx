@@ -26,6 +26,24 @@ function App() {
   const [user, setUser] = useState<User | undefined>(undefined);
 
   useEffect(() => {
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     const checkAuth = async () => {
       if (apiService.isAuthenticated()) {
         try {
@@ -39,6 +57,7 @@ function App() {
       }
       setIsLoading(false);
     };
+
     checkAuth();
   }, []);
 

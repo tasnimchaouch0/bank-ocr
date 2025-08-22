@@ -32,7 +32,7 @@ interface AuthResponse {
 interface BankStatementData {
   id?: number;
   filename: string;
-  extracted_data: string;
+  extracted_data: string| null;
   account_number?: string;
   account_holder?: string;
   bank_name?: string;
@@ -49,6 +49,7 @@ export interface Customer {
 }
 
 export interface Transaction {
+  [x: string]: any;
   id: number;
   date: string;
   amount: number;
@@ -246,34 +247,35 @@ async updateBankStatement(id: number, data: Partial<BankStatementData>) {
     return userStr ? JSON.parse(userStr) : null;
   }
 
- // src/services/api.ts
-async getAllTransactions() {
-  const response = await fetch(`${API_BASE_URL}/admin/transactions`, {
-    method: "GET",
-    headers: this.getAuthHeaders(),
-  });
+  // 👇 Added methods for FraudDetection.tsx
+  async getAllTransactions(): Promise<Transaction[]> {
+    const response = await fetch(`${API_BASE_URL}/admin/predict/transactions`, {
+      headers: this.getAuthHeaders(),
+    });
 
-  if (!response.ok) {
-    throw new Error("Failed to fetch transactions");
+    if (!response.ok) {
+      throw new Error('Failed to fetch transactions');
+    }
+
+    return response.json();
+
   }
 
-  return response.json();
-}
+  async predictFraud(transactionId: number): Promise<FraudPrediction> {
+    const response = await fetch(`${API_BASE_URL}/transactions/${transactionId}/fraud-prediction`, {
+      headers: this.getAuthHeaders(),
+    });
 
-async predictFraud(transactionId: number) {
-  const response = await fetch(`${API_BASE_URL}/fraud/predict/${transactionId}`, {
-    method: "GET",
-    headers: this.getAuthHeaders(),
-  });
+    if (!response.ok) {
+      throw new Error('Failed to fetch fraud prediction');
+    }
 
-  if (!response.ok) {
-    throw new Error("Failed to predict fraud");
+
+
+    return response.json();
+
   }
-
-  return response.json();
 }
-}
-
 export const apiService = new ApiService();
 export type { 
   User, 
