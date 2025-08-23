@@ -62,7 +62,17 @@ export interface FraudPrediction {
   fraud_score: number;
   is_fraudulent: boolean;
 }
+export interface CreditScoreResponse {
+  predicted_credit_score: string;
+  probability: number;
+  model_used: string;
+  user_id: number;
+  username: string;
+}
 
+export interface AllCreditScoresResponse {
+  scores: CreditScoreResponse[];
+}
 class ApiService {
   private getAuthHeaders() {
     const token = localStorage.getItem('access_token');
@@ -260,6 +270,28 @@ async updateBankStatement(id: number, data: Partial<BankStatementData>) {
     return response.json();
 
   }
+  async getAllCreditScores(): Promise<CreditScoreResponse[]> {
+    const response = await fetch(`${API_BASE_URL}/credit_score/predict_all`, {
+      headers: this.getAuthHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch credit scores');
+    }
+
+    return response.json();
+   
+  }
+  // services/api.ts
+async getCreditScore(user_id: number): Promise<CreditScoreResponse> {
+  const response = await fetch(`${API_BASE_URL}/credit_score/predict/${user_id}`, {
+    headers: this.getAuthHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error('Failed to fetch credit score');
+  }
+  return response.json(); 
+}
 
   async predictFraud(transactionId: number): Promise<FraudPrediction> {
     const response = await fetch(`${API_BASE_URL}/transactions/${transactionId}/fraud-prediction`, {
@@ -283,4 +315,5 @@ export type {
   LoginCredentials, 
   RegisterData, 
   BankStatementData, 
+  
 };

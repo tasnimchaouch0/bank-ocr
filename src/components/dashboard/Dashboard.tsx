@@ -90,7 +90,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
 
                 </li>
                 <li className="nav-item">
-                  <Link className="nav-link active" to="/CreditScoring">Credit Scoring</Link>
+                  <Link className="nav-link active" to={`/score/${user.id}`}>Credit Scoring</Link>
                 </li>
               </ul>
             )}

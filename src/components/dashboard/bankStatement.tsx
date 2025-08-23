@@ -260,7 +260,7 @@ export const BankStatement: React.FC<BankStatementProps> = ({ user }) => {
                 <i className="fas fa-edit"></i> Modify Statement
               </button>
               <button onClick={handleReturn} className="button button-secondary">
-                <i className="fas fa-arrow-left"></i> Return
+                <i className="fas fa-arrow-left"></i> Back
               </button>
             </div>
           </div>

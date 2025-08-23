@@ -5,6 +5,7 @@ import { Dashboard } from "./components/dashboard/Dashboard";
 //import { CreditCard } from "./components/dashboard/creditCard.tsx";
 import { BankStatement } from "./components/dashboard/bankStatement.tsx";
 import { CreditScoring } from "./components/dashboard/creditScoring";
+import  UserScore  from "./components/dashboard/UserScore";
 import { apiService, type User } from './services/api';
 import { FraudDetection } from "./components/dashboard/fraudDetection.tsx";
 import Customers  from "./components/dashboard/Customers.tsx";
@@ -26,24 +27,6 @@ function App() {
   const [user, setUser] = useState<User | undefined>(undefined);
 
   useEffect(() => {
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     const checkAuth = async () => {
       if (apiService.isAuthenticated()) {
         try {
@@ -91,10 +74,11 @@ function App() {
       {isAuthenticated && user ? (
         <Routes>
           <Route path="/" element={<Dashboard onLogout={handleLogout} />} />
-          <Route path="/creditScoring" element={<CreditScoring user={user} />} />
+          <Route path="/creditScoring" element={<CreditScoring/>} />
         <Route path="/modify-statement/:statementId" element={<ModifyStatement />} />
           { /*<Route path="/creditCard" element={<CreditCard user={user} />} />*/}
-          <Route path="/bankStatement" element={<BankStatement user={user} />} /> 
+          <Route path="/bankStatement" element={<BankStatement user={user} />} />
+          <Route path="/score/:userId" element={<UserScore />} />
           <Route path="/fraudDetection" element={<FraudDetection />} /> 
           <Route path="/customers" element={<Customers />} /> 
           <Route path="/admins" element={<Admins />} /> 

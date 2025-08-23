@@ -21,6 +21,8 @@ from joblib import load
 import traceback
 import requests
 from sqlalchemy.orm import Session
+import pickle
+import numpy as np
 
 app = FastAPI()
 ocr = PaddleOCR(use_angle_cls=False, lang='en')  # Load only once
@@ -74,16 +76,11 @@ class User(Base):
     age = Column(Integer, nullable=True)
     gender = Column(String(50), nullable=True)
     occupation = Column(String(255), nullable=True)
+    ssn = Column(String(20), unique=True, index=True, nullable=True)
     annual_income = Column(Float, nullable=True)
     monthly_inhand_salary = Column(Float, nullable=True)
     num_bank_accounts = Column(Integer, default=0)
     num_credit_card = Column(Integer, default=0)
-    outstanding_debt = Column(Float, default=0.0)
-    credit_utilization_ratio = Column(Float, default=0.0)
-    payment_behaviour = Column(String(50), nullable=True)
-    payment_of_min_amount = Column(String(50), nullable=True)
-    credit_mix = Column(String(50), nullable=True)
-    total_emi_per_month = Column(Float, default=0.0)
     role = Column(String(50), default="customer")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -101,7 +98,25 @@ class BankStatement(Base):
     bank_name = Column(String(255), nullable=True)
     statement_period = Column(String(255), nullable=True)
     total_credits = Column(Float, default=0.0)
-    total_debits = Column(Float, default=0.0)
+    total_debits = Column(Float, default=0.0) 
+    outstanding_debt = Column(Float, default=0.0)
+    credit_utilization_ratio = Column(Float, default=0.0)
+    payment_behaviour = Column(String(50), nullable=True)
+    payment_of_min_amount = Column(String(50), nullable=True)
+    credit_mix = Column(String(50), nullable=True)
+    total_emi_per_month = Column(Float, default=0.0)
+    interest_rate = Column(Float, nullable=True) 
+    num_of_loan = Column(Integer, default=0) 
+    type_of_loan = Column(String(255), nullable=True)  
+    delay_from_due_date = Column(Float, nullable=True)
+    num_of_delayed_payment = Column(Integer, default=0)  
+    changed_credit_limit = Column(Float, default=0.0) 
+    num_credit_inquiries = Column(Integer, default=0)  
+    month = Column(String(50), nullable=True)
+    credit_history_age = Column(String(50), nullable=True)   # e.g. "10 Years 2 Months"
+    amount_invested_monthly = Column(Float, default=0.0)
+    monthly_balance = Column(Float, default=0.0)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     user = relationship("User", back_populates="statement")
     transactions = relationship("Transaction", back_populates="bank_statement")
@@ -190,6 +205,26 @@ class BankStatementResponse(BaseModel):
 class OCRResult(BaseModel):
     text: str
     confidence: float
+
+lr_model = joblib.load("../src/models/logistic_regression_model.pkl")
+dt_model = joblib.load("../src/models/decision_tree_model.pkl")
+rf_model = joblib.load("../src/models/random_forest_model.pkl")
+scaler = joblib.load("../src/models/scaler.pkl")
+
+with open("../src/models/categorical_encoders.pkl", "rb") as f:
+    encoders = pickle.load(f)
+
+# Define the numeric and categorical columns (same as training)
+numeric_cols = [
+    "Age", "Annual_Income", "Monthly_Inhand_Salary",
+    "Num_Bank_Accounts", "Num_Credit_Card", "Interest_Rate",
+    "Num_of_Loan", "Delay_from_due_date", "Num_of_Delayed_Payment",
+    "Changed_Credit_Limit", "Num_Credit_Inquiries", "Outstanding_Debt",
+    "Credit_Utilization_Ratio", "Total_EMI_per_month", "Amount_invested_monthly",
+    "Monthly_Balance"
+]
+
+categorical_cols = list(encoders.keys())
 
 # Load fraud model once
 MODEL_PATH = "../src/models/random_forest.pkl"
@@ -360,6 +395,184 @@ def predict_all_transactions(db: Session = Depends(get_db)):
         })
 
     return results
+@app.get("/credit_score/predict_all")
+def predict_all_users(model_type: str = "rf", db: Session = Depends(get_db)):
+    users = db.query(User).all()
+    results = []
+
+    # Get the features the scaler/model expects
+    expected_features = scaler.feature_names_in_.tolist()
+
+    for user in users:
+        statement = getattr(user, "statement", None)
+
+        # Build base features
+        features = {
+            "Month": getattr(statement, "month", np.nan),
+            "Name": user.full_name,
+            "SSN": user.ssn,
+            "Occupation": user.occupation,
+            "Type_of_Loan": getattr(statement, "type_of_loan", "unknown"),
+            "Credit_Mix": getattr(statement, "credit_mix", "unknown"),
+            "Credit_History_Age": getattr(statement, "credit_history_age", np.nan),
+            "Payment_of_Min_Amount": getattr(statement, "payment_of_min_amount", "unknown"),
+            "Payment_Behaviour": getattr(statement, "payment_behaviour", "unknown"),
+            "Age": user.age,
+            "Annual_Income": user.annual_income,
+            "Monthly_Inhand_Salary": user.monthly_inhand_salary,
+            "Num_Bank_Accounts": user.num_bank_accounts,
+            "Num_Credit_Card": user.num_credit_card,
+            "Interest_Rate": getattr(statement, "interest_rate", np.nan),
+            "Num_of_Loan": getattr(statement, "num_of_loan", np.nan),
+            "Delay_from_due_date": getattr(statement, "delay_from_due_date", np.nan),
+            "Num_of_Delayed_Payment": getattr(statement, "num_of_delayed_payment", np.nan),
+            "Changed_Credit_Limit": getattr(statement, "changed_credit_limit", np.nan),
+            "Num_Credit_Inquiries": getattr(statement, "num_credit_inquiries", np.nan),
+            "Outstanding_Debt": getattr(statement, "outstanding_debt", np.nan),
+            "Credit_Utilization_Ratio": getattr(statement, "credit_utilization_ratio", np.nan),
+            "Total_EMI_per_month": getattr(statement, "total_emi_per_month", np.nan),
+            "Amount_invested_monthly": getattr(statement, "amount_invested_monthly", np.nan),
+            "Monthly_Balance": getattr(statement, "monthly_balance", np.nan),
+        }
+
+        # Encode categorical columns
+        for col in categorical_cols:
+            features[col] = getattr(user, col, "unknown")
+
+        df = pd.DataFrame([features])
+
+        # Encode categorical columns using existing encoders
+        for col in categorical_cols:
+            le = encoders[col]
+            df[col] = df[col].astype(str)
+            if df[col][0] not in le.classes_:
+                df[col] = le.transform([le.classes_[0]])  # fallback to first known class
+            else:
+                df[col] = le.transform(df[col])
+
+        # Align columns with model/scaler
+        for col in expected_features:
+            if col not in df.columns:
+                df[col] = 0
+
+        df = df[expected_features]
+
+        # Scale numeric columns
+        df_scaled = pd.DataFrame(scaler.transform(df), columns=df.columns)
+
+        # Fill any remaining NaNs (just in case)
+        df_scaled = df_scaled.fillna(0)
+
+        # Select model
+        if model_type.lower() == "lr":
+            model = lr_model
+        elif model_type.lower() == "dt":
+            model = dt_model
+        else:
+            model = rf_model
+
+        # Make predictions
+        pred_class = model.predict(df_scaled)[0]
+        pred_proba = model.predict_proba(df_scaled).max()
+        label_map = {0: "Poor", 1: "Standard", 2: "Good"}
+        pred_label = label_map.get(pred_class, "Unknown")
+
+        results.append({
+            "user_id": user.id,
+            "username": user.username,
+            "full_name": user.full_name,
+            "predicted_credit_score": pred_label,
+            "probability": float(pred_proba),
+            "model_used": model_type
+        })
+
+    return results
+@app.get("/credit_score/predict/{user_id}")
+def predict_user_credit_score(user_id: int, model_type: str = "rf", db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    statement = getattr(user, "statement", None)
+
+    # Get expected features
+    expected_features = scaler.feature_names_in_.tolist()
+
+    # Build features dict
+    features = {
+        "Month": getattr(statement, "month", np.nan),
+        "Name": user.full_name,
+        "SSN": user.ssn,
+        "Occupation": user.occupation,
+        "Type_of_Loan": getattr(statement, "type_of_loan", "unknown"),
+        "Credit_Mix": getattr(statement, "credit_mix", "unknown"),
+        "Credit_History_Age": getattr(statement, "credit_history_age", np.nan),
+        "Payment_of_Min_Amount": getattr(statement, "payment_of_min_amount", "unknown"),
+        "Payment_Behaviour": getattr(statement, "payment_behaviour", "unknown"),
+        "Age": user.age,
+        "Annual_Income": user.annual_income,
+        "Monthly_Inhand_Salary": user.monthly_inhand_salary,
+        "Num_Bank_Accounts": user.num_bank_accounts,
+        "Num_Credit_Card": user.num_credit_card,
+        "Interest_Rate": getattr(statement, "interest_rate", np.nan),
+        "Num_of_Loan": getattr(statement, "num_of_loan", np.nan),
+        "Delay_from_due_date": getattr(statement, "delay_from_due_date", np.nan),
+        "Num_of_Delayed_Payment": getattr(statement, "num_of_delayed_payment", np.nan),
+        "Changed_Credit_Limit": getattr(statement, "changed_credit_limit", np.nan),
+        "Num_Credit_Inquiries": getattr(statement, "num_credit_inquiries", np.nan),
+        "Outstanding_Debt": getattr(statement, "outstanding_debt", np.nan),
+        "Credit_Utilization_Ratio": getattr(statement, "credit_utilization_ratio", np.nan),
+        "Total_EMI_per_month": getattr(statement, "total_emi_per_month", np.nan),
+        "Amount_invested_monthly": getattr(statement, "amount_invested_monthly", np.nan),
+        "Monthly_Balance": getattr(statement, "monthly_balance", np.nan),
+    }
+
+    # Encode categorical columns
+    for col in categorical_cols:
+        features[col] = getattr(user, col, "unknown")
+
+    df = pd.DataFrame([features])
+
+    # Encode categorical features
+    for col in categorical_cols:
+        le = encoders[col]
+        df[col] = df[col].astype(str)
+        if df[col][0] not in le.classes_:
+            df[col] = le.transform([le.classes_[0]])
+        else:
+            df[col] = le.transform(df[col])
+
+    # Align columns with expected features
+    for col in expected_features:
+        if col not in df.columns:
+            df[col] = 0
+    df = df[expected_features]
+
+    # Scale numeric columns and fill NaNs
+    df_scaled = pd.DataFrame(scaler.transform(df), columns=df.columns).fillna(0)
+
+    # Select model
+    if model_type.lower() == "lr":
+        model = lr_model
+    elif model_type.lower() == "dt":
+        model = dt_model
+    else:
+        model = rf_model
+
+    # Predict
+    pred_class = model.predict(df_scaled)[0]
+    pred_proba = model.predict_proba(df_scaled).max()
+    label_map = {0: "Poor", 1: "Standard", 2: "Good"}
+    pred_label = label_map.get(pred_class, "Unknown")
+    print("done")
+    return {
+        "user_id": user.id,
+        "username": user.username,
+        "full_name": user.full_name,
+        "predicted_credit_score": pred_label,
+        "probability": float(pred_proba),
+        "model_used": model_type
+    }
 
 # Fraud prediction endpoint
 @app.get("/fraud/predict/{transaction_id}")

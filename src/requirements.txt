@@ -4,17 +4,13 @@ scikit-learn==1.2.2
 imbalanced-learn==0.11.0
 scipy==1.11.4
 # Core data science
-pandas
-numpy
-scikit-learn
-scipy
 joblib
 imbalanced-learn
 
 # Machine learning models
 xgboost
-catboost
-tensorflow
+# catboost
+# tensorflow
 
 # Visualization
 matplotlib
