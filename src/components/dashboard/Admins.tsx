@@ -18,7 +18,7 @@ const Admins: React.FC = () => {
     try {
       setLoading(true);
       const allUsers = await apiService.getAllUsers();
-      setAdmins(allUsers.filter((u: { role: string; }) => u.role === 'admin'));
+      setAdmins(allUsers.filter((u: { role: string }) => u.role === 'admin'));
     } catch (error) {
       console.error('Failed to load admins:', error);
     } finally {
@@ -44,22 +44,21 @@ const Admins: React.FC = () => {
     }
   };
 
-  if (loading) return <p>Loading admins...</p>;
+  if (loading) return <div>Loading admins...</div>;
 
   return (
-    <div>
-      <button className="btn btn-outline-primary mb-3" onClick={() => navigate(-1)}>
-        &larr; Back
+    <div className="container mt-4">
+      <h2>Admin Management</h2>
+
+      <button className="btn btn-secondary mb-3" onClick={() => navigate(-1)}>
+        ← Back
       </button>
 
-      <h2 className="mb-4">Admin Management</h2>
-
-      {/* Admins Table */}
       <div className="card border-0 shadow-sm mb-4">
         <div className="card-body">
           <div className="table-responsive">
-            <table className="table table-hover">
-              <thead className="table-light">
+            <table className="table table-striped mt-3">
+              <thead>
                 <tr>
                   <th>Name</th>
                   <th>Email</th>
@@ -82,7 +81,6 @@ const Admins: React.FC = () => {
         </div>
       </div>
 
-      {/* Create New Admin */}
       <div className="card border-0 shadow-sm">
         <div className="card-body">
           <h5 className="fw-semibold mb-3">Create New Admin</h5>

@@ -79,6 +79,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ onLogout }) => {
                 <li className="nav-item">
                   <Link className="nav-link active" to="/fraudDetection">Fraud Detection</Link>
                 </li>
+                <li className="nav-item">
+                  <Link className="nav-link active" to="/creditScoring">Credit Scoring</Link>
+                </li>
               </ul>
             ) : (
               <ul className="navbar-nav me-auto mb-2 mb-lg-0">

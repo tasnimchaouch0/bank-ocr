@@ -11,7 +11,7 @@ imbalanced-learn
 xgboost
 # catboost
 # tensorflow
-
+nodemailer
 # Visualization
 matplotlib
 seaborn

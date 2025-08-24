@@ -23,6 +23,10 @@ import requests
 from sqlalchemy.orm import Session
 import pickle
 import numpy as np
+from fastapi import FastAPI, BackgroundTasks
+from pydantic import BaseModel
+import smtplib
+from email.mime.text import MIMEText
 
 app = FastAPI()
 ocr = PaddleOCR(use_angle_cls=False, lang='en')  # Load only once
@@ -142,7 +146,6 @@ class Transaction(Base):
     merch_long = Column(Float, nullable=True)  
     city_pop = Column(Integer, nullable=True)  
     fraud_score = Column(Float, nullable=True)
-
     user = relationship("User", back_populates="transactions")
     bank_statement = relationship("BankStatement", back_populates="transactions")
 
@@ -205,6 +208,22 @@ class BankStatementResponse(BaseModel):
 class OCRResult(BaseModel):
     text: str
     confidence: float
+class FraudAlertRequest(BaseModel):
+    email: str
+    transaction: dict
+def send_email(to_email: str, subject: str, body: str):
+    sender = os.getenv("GMAIL_USER")   # Replace with your sender email
+    password = os.getenv("GMAIL_PASS")        # Or use environment variables
+
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = to_email
+
+    with smtplib.SMTP("smtp.gmail.com", 587) as server:  # Adjust SMTP for your provider
+        server.starttls()
+        server.login(sender, password)
+        server.sendmail(sender, [to_email], msg.as_string())
 
 lr_model = joblib.load("../src/models/logistic_regression_model.pkl")
 dt_model = joblib.load("../src/models/decision_tree_model.pkl")
@@ -227,7 +246,7 @@ numeric_cols = [
 categorical_cols = list(encoders.keys())
 
 # Load fraud model once
-MODEL_PATH = "../src/models/random_forest.pkl"
+MODEL_PATH = "../src/models/fraud_model.pkl"
 fraud_model = joblib.load(MODEL_PATH)
 preprocessor = joblib.load("../src/models/preprocessor.pkl")
 X_train_columns = joblib.load("../src/models/X_train_columns.pkl")
@@ -349,6 +368,62 @@ def update_statement(
     db.commit()
     db.refresh(db_statement)
     return db_statement
+@app.get("/fraud/predict/{transaction_id}")
+def predict_transaction(transaction_id: int, db: Session = Depends(get_db)):
+    # Fetch transaction
+    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    # Fetch linked user (for gender & occupation)
+    user = db.query(User).filter(User.id == tx.customer_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Prepare features for ML model
+    features = {
+        "merchant": tx.merchant,
+        "category": tx.category,
+        "city": tx.city,
+        "state": tx.state,
+        "zip": tx.zip_code,
+        "lat": tx.lat,
+        "long": tx.long,
+        "city_pop": tx.city_pop,
+        "unix_time": tx.unix_time,
+        "merch_lat": tx.merch_lat,
+        "merch_long": tx.merch_long,
+        "trans_hour": tx.trans_hour,
+        "trans_day_of_week": tx.trans_day_of_week,
+        "amt": tx.amount,
+        "gender": getattr(user, "gender", None),
+        "job": getattr(user, "occupation", None)
+    }
+
+    df = pd.DataFrame([features])
+
+    # --- Preprocess categorical features like during training ---
+    categorical_cols = ["merchant", "category", "city", "state", "zip", "gender", "job"]
+    df_encoded = pd.get_dummies(df, columns=categorical_cols)
+
+    # Ensure columns match training data
+    df_encoded = df_encoded.reindex(columns=X_train_columns, fill_value=0)  # X_train_columns = list of columns from training
+    probas = fraud_model.predict_proba(df_encoded)
+    print("Raw predict_proba output:\n", probas)
+
+    # Predict fraud probability
+    fraud_score = fraud_model.predict_proba(df_encoded)[:, 1][0]  # probability fraud
+
+    return {
+        "transaction_id": tx.id,
+        "customer_id": tx.customer_id,
+        "merchant": tx.merchant,
+        "amount": tx.amount,
+        "fraud_score": 1.0,
+        "is_fraudulent": True
+    }
+
+
 @app.get("/admin/predict/transactions")
 def predict_all_transactions(db: Session = Depends(get_db)):
     transactions = db.query(Transaction).all()
@@ -357,31 +432,34 @@ def predict_all_transactions(db: Session = Depends(get_db)):
     for tx in transactions:
         user = db.query(User).filter(User.id == tx.customer_id).first()
         features = {
-            "merchant": tx.merchant,
-            "category": tx.category,
-            "city": tx.city,
-            "state": tx.state,
-            "zip_code": tx.zip_code,
-            "lat": tx.lat,
-            "long": tx.long,
-            "city_pop": tx.city_pop,
-            "unix_time": tx.unix_time,
-            "merch_lat": tx.merch_lat,
-            "merch_long": tx.merch_long,
-            "trans_hour": tx.trans_hour,
-            "trans_day_of_week": tx.trans_day_of_week,
-            "amt": tx.amount,
-            "gender": getattr(user, "gender", None),
-            "occupation": getattr(user, "occupation", None)
-        }
+    "num__amt": tx.amount,
+    "num__lat": tx.lat,
+    "num__long": tx.long,
+    "num__city_pop": tx.city_pop,
+    "num__unix_time": tx.unix_time,
+    "num__merch_lat": tx.merch_lat,
+    "num__merch_long": tx.merch_long,
+    "num__trans_hour": tx.trans_hour,
+    "num__trans_day_of_week": tx.trans_day_of_week,
+    # categorical features
+    "cat__merchant": tx.merchant,
+    "cat__category": tx.category,
+    "cat__city": tx.city,
+    "cat__state": tx.state,
+    "cat__zip": tx.zip_code,
+    "cat__gender": getattr(user, "gender", None),
+    "cat__job": getattr(user, "occupation", None)
+}
 
         df = pd.DataFrame([features])
 
         # Encode categoricals same as training
-        categorical_cols = ["merchant", "category", "city", "state", "zip_code", "gender", "occupation"]
+        categorical_cols = ["cat__merchant", "cat__category", "cat__city", "cat__state", "cat__zip", "cat__gender", "cat__job"]
         df_encoded = pd.get_dummies(df, columns=categorical_cols)
+        print("xtrain col",X_train_columns)
         df_encoded = df_encoded.reindex(columns=X_train_columns, fill_value=0)
-
+        probas = fraud_model.predict_proba(df_encoded)
+        print("Raw predict_proba output:\n", probas)
         fraud_score = fraud_model.predict_proba(df_encoded)[:, 1][0]
 
         results.append({
@@ -389,24 +467,79 @@ def predict_all_transactions(db: Session = Depends(get_db)):
             "customer_full_name": user.full_name,
             "customer_mail":user.email,
             "merchant": tx.merchant,
+            "category":tx.category,
             "amount": tx.amount,
             "fraud_score": float(fraud_score),
-            "is_fraudulent": bool(fraud_score > 0.5)
+            "is_fraudulent": bool(fraud_score > 0.5),
+            "date": tx.date.isoformat() if tx.date else None
         })
 
     return results
+@app.get("/fraud/predict/{transaction_id}")
+def predict_transaction(transaction_id: int, db: Session = Depends(get_db)):
+    # Fetch transaction
+    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    # Fetch linked user (for gender & occupation)
+    user = db.query(User).filter(User.id == tx.customer_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Prepare features for ML model
+    features = {
+    "num__amt": tx.amount,
+    "num__lat": tx.lat,
+    "num__long": tx.long,
+    "num__city_pop": tx.city_pop,
+    "num__unix_time": tx.unix_time,
+    "num__merch_lat": tx.merch_lat,
+    "num__merch_long": tx.merch_long,
+    "num__trans_hour": tx.trans_hour,
+    "num__trans_day_of_week": tx.trans_day_of_week,
+    # categorical features
+    "cat__merchant": tx.merchant,
+    "cat__category": tx.category,
+    "cat__city": tx.city,
+    "cat__state": tx.state,
+    "cat__zip": tx.zip_code,
+    "cat__gender": getattr(user, "gender", None),
+    "cat__job": getattr(user, "occupation", None)
+}
+
+    df = pd.DataFrame([features])
+
+    # --- Preprocess categorical features like during training ---
+    categorical_cols = ["cat__merchant", "cat__category", "cat__city", "cat__state", "cat__zip", "cat__gender", "job"]
+    df_encoded = pd.get_dummies(df, columns=categorical_cols)
+
+    # Ensure columns match training data
+    df_encoded = df_encoded.reindex(columns=X_train_columns, fill_value=0)  # X_train_columns = list of columns from training
+
+    # Predict fraud probability
+    fraud_score = fraud_model.predict_proba(df_encoded)[:, 1][0]  # probability fraud
+
+    return {
+        "transaction_id": tx.id,
+        "customer_id": tx.customer_id,
+        "merchant": tx.merchant,
+        "category":tx.category,
+        "amount": tx.amount,
+        "fraud_score": 1.0,
+        "is_fraudulent": True,
+        "date": tx.date.isoformat() if tx.date else None
+    }
 @app.get("/credit_score/predict_all")
 def predict_all_users(model_type: str = "rf", db: Session = Depends(get_db)):
     users = db.query(User).all()
     results = []
 
-    # Get the features the scaler/model expects
     expected_features = scaler.feature_names_in_.tolist()
 
     for user in users:
         statement = getattr(user, "statement", None)
 
-        # Build base features
         features = {
             "Month": getattr(statement, "month", np.nan),
             "Name": user.full_name,
@@ -435,35 +568,26 @@ def predict_all_users(model_type: str = "rf", db: Session = Depends(get_db)):
             "Monthly_Balance": getattr(statement, "monthly_balance", np.nan),
         }
 
-        # Encode categorical columns
         for col in categorical_cols:
             features[col] = getattr(user, col, "unknown")
 
         df = pd.DataFrame([features])
 
-        # Encode categorical columns using existing encoders
         for col in categorical_cols:
             le = encoders[col]
             df[col] = df[col].astype(str)
             if df[col][0] not in le.classes_:
-                df[col] = le.transform([le.classes_[0]])  # fallback to first known class
+                df[col] = le.transform([le.classes_[0]])
             else:
                 df[col] = le.transform(df[col])
 
-        # Align columns with model/scaler
         for col in expected_features:
             if col not in df.columns:
                 df[col] = 0
 
         df = df[expected_features]
+        df_scaled = pd.DataFrame(scaler.transform(df), columns=df.columns).fillna(0)
 
-        # Scale numeric columns
-        df_scaled = pd.DataFrame(scaler.transform(df), columns=df.columns)
-
-        # Fill any remaining NaNs (just in case)
-        df_scaled = df_scaled.fillna(0)
-
-        # Select model
         if model_type.lower() == "lr":
             model = lr_model
         elif model_type.lower() == "dt":
@@ -471,22 +595,34 @@ def predict_all_users(model_type: str = "rf", db: Session = Depends(get_db)):
         else:
             model = rf_model
 
-        # Make predictions
         pred_class = model.predict(df_scaled)[0]
         pred_proba = model.predict_proba(df_scaled).max()
+
         label_map = {0: "Poor", 1: "Standard", 2: "Good"}
+        score_ranges = {
+            0: (300, 580),
+            1: (581, 670),
+            2: (671, 850)
+        }
+
         pred_label = label_map.get(pred_class, "Unknown")
+        score_min, score_max = score_ranges.get(pred_class, (300, 850))
+
+        # interpolate inside range using probability
+        numeric_score = int(score_min + (score_max - score_min) * pred_proba)
 
         results.append({
             "user_id": user.id,
             "username": user.username,
             "full_name": user.full_name,
             "predicted_credit_score": pred_label,
+            "numeric_score": numeric_score,
             "probability": float(pred_proba),
             "model_used": model_type
         })
 
     return results
+
 @app.get("/credit_score/predict/{user_id}")
 def predict_user_credit_score(user_id: int, model_type: str = "rf", db: Session = Depends(get_db)):
     user = db.query(User).filter(User.id == user_id).first()
@@ -494,11 +630,8 @@ def predict_user_credit_score(user_id: int, model_type: str = "rf", db: Session 
         raise HTTPException(status_code=404, detail="User not found")
 
     statement = getattr(user, "statement", None)
-
-    # Get expected features
     expected_features = scaler.feature_names_in_.tolist()
 
-    # Build features dict
     features = {
         "Month": getattr(statement, "month", np.nan),
         "Name": user.full_name,
@@ -527,13 +660,11 @@ def predict_user_credit_score(user_id: int, model_type: str = "rf", db: Session 
         "Monthly_Balance": getattr(statement, "monthly_balance", np.nan),
     }
 
-    # Encode categorical columns
     for col in categorical_cols:
         features[col] = getattr(user, col, "unknown")
 
     df = pd.DataFrame([features])
 
-    # Encode categorical features
     for col in categorical_cols:
         le = encoders[col]
         df[col] = df[col].astype(str)
@@ -542,16 +673,13 @@ def predict_user_credit_score(user_id: int, model_type: str = "rf", db: Session 
         else:
             df[col] = le.transform(df[col])
 
-    # Align columns with expected features
     for col in expected_features:
         if col not in df.columns:
             df[col] = 0
     df = df[expected_features]
 
-    # Scale numeric columns and fill NaNs
     df_scaled = pd.DataFrame(scaler.transform(df), columns=df.columns).fillna(0)
 
-    # Select model
     if model_type.lower() == "lr":
         model = lr_model
     elif model_type.lower() == "dt":
@@ -559,73 +687,30 @@ def predict_user_credit_score(user_id: int, model_type: str = "rf", db: Session 
     else:
         model = rf_model
 
-    # Predict
     pred_class = model.predict(df_scaled)[0]
     pred_proba = model.predict_proba(df_scaled).max()
+
     label_map = {0: "Poor", 1: "Standard", 2: "Good"}
+    score_ranges = {
+        0: (300, 579),   # Poor
+        1: (580, 669),   # Standard (Fair)
+        2: (670, 850)    # Good
+    }
+
     pred_label = label_map.get(pred_class, "Unknown")
-    print("done")
+    score_min, score_max = score_ranges.get(pred_class, (300, 850))
+
+    # Scale numeric score within the range for that class
+    numeric_score = int(score_min + (score_max - score_min) * pred_proba)
+
     return {
         "user_id": user.id,
         "username": user.username,
         "full_name": user.full_name,
         "predicted_credit_score": pred_label,
+        "numeric_score": numeric_score,
         "probability": float(pred_proba),
         "model_used": model_type
-    }
-
-# Fraud prediction endpoint
-@app.get("/fraud/predict/{transaction_id}")
-def predict_transaction(transaction_id: int, db: Session = Depends(get_db)):
-    # Fetch transaction
-    tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
-    if not tx:
-        raise HTTPException(status_code=404, detail="Transaction not found")
-
-    # Fetch linked user (for gender & occupation)
-    user = db.query(User).filter(User.id == tx.customer_id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # Prepare features for ML model
-    features = {
-        "merchant": tx.merchant,
-        "category": tx.category,
-        "city": tx.city,
-        "state": tx.state,
-        "zip_code": tx.zip_code,
-        "lat": tx.lat,
-        "long": tx.long,
-        "city_pop": tx.city_pop,
-        "unix_time": tx.unix_time,
-        "merch_lat": tx.merch_lat,
-        "merch_long": tx.merch_long,
-        "trans_hour": tx.trans_hour,
-        "trans_day_of_week": tx.trans_day_of_week,
-        "amt": tx.amount,
-        "gender": getattr(user, "gender", None),
-        "occupation": getattr(user, "occupation", None)
-    }
-
-    df = pd.DataFrame([features])
-
-    # --- Preprocess categorical features like during training ---
-    categorical_cols = ["merchant", "category", "city", "state", "zip_code", "gender", "occupation"]
-    df_encoded = pd.get_dummies(df, columns=categorical_cols)
-
-    # Ensure columns match training data
-    df_encoded = df_encoded.reindex(columns=X_train_columns, fill_value=0)  # X_train_columns = list of columns from training
-
-    # Predict fraud probability
-    fraud_score = fraud_model.predict_proba(df_encoded)[:, 1][0]  # probability fraud
-
-    return {
-        "transaction_id": tx.id,
-        "customer_id": tx.customer_id,
-        "merchant": tx.merchant,
-        "amount": tx.amount,
-        "fraud_score": float(fraud_score),
-        "is_fraudulent": bool(fraud_score > 0.5)
     }
 
 
@@ -765,7 +850,30 @@ async def process_ocr(file: UploadFile = File(...), current_user: User = Depends
 def read_root():
     return {"message": "Bank OCR API is running"}
 import traceback
+@app.post("/send-fraud-alert")
+def send_fraud_alert(req: FraudAlertRequest, background_tasks: BackgroundTasks):
+    subject = "⚠️ Fraud Alert Detected"
+    body = f"""
+    Dear Customer,
 
+    We detected a suspicious transaction:
+
+    - Transaction ID: {req.transaction.get("id")}
+    - Amount: {req.transaction.get("amount")}
+    - Merchant: {req.transaction.get("merchant")}
+    - Category: {req.transaction.get("category")}
+    - Date: {req.transaction.get("date")}
+
+    Please review this transaction immediately.
+
+    Thank you,
+    Your Bank
+    """
+
+    # Run email sending in background
+    background_tasks.add_task(send_email, req.email, subject, body)
+
+    return {"status": "success", "message": f"Fraud alert email queued for {req.email}"}
 @app.post("/ocr/")
 async def process_image(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     try:

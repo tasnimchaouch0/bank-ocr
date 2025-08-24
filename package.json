@@ -13,6 +13,7 @@
     "@n8n/chat": "^0.47.0",
     "axios": "^1.11.0",
     "bootstrap": "^5.3.7",
+    "nodemailer": "^7.0.5",
     "pandas": "^0.0.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.29.0",
+    "@types/nodemailer": "^7.0.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@types/react-router-dom": "^5.3.3",

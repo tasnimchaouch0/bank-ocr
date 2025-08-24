@@ -105,7 +105,6 @@ def main():
     print("Legitimate Cases in Train:", len(train_data[train_data['is_fraud'] == 0]))
     print("\nTest Data Shape:", test_data.shape)
 
-
     # Preprocess
     train_data, test_data = preprocess_data(train_data, test_data)
 
@@ -130,11 +129,15 @@ def main():
     # Save main model (Random Forest)
     joblib.dump(fraud_model, "models/fraud_model.pkl")
     print("✅ Main fraud model saved to models/fraud_model.pkl")
-
     # Save training columns (handles one-hot encoding)
     X_train_columns = preprocessor.get_feature_names_out()
+    print("Feature columns after preprocessing:")
+    for i, col in enumerate(X_train_columns, start=1):
+        if i<100 :  # every 100th column
+            print(f"{i}: {col}")
     joblib.dump(X_train_columns, "models/X_train_columns.pkl")
     print("✅ Training columns saved to models/X_train_columns.pkl")
+    feature_names = []
 
 
 if __name__ == "__main__":

@@ -56,6 +56,7 @@ export const CreditScoring: React.FC = () => {
               <th>User ID</th>
               <th>Username</th>
               <th>Predicted Score</th>
+              <th>Numeric Score</th>
               <th>Probability</th>
               <th>Model Used</th>
             </tr>
@@ -66,6 +67,7 @@ export const CreditScoring: React.FC = () => {
                 <td>{score.user_id}</td>
                 <td>{score.username}</td>
                 <td>{getCreditStatus(score)}</td>
+                <td>{(score.numeric_score)}</td>
                 <td>{(score.probability * 100).toFixed(1)}%</td>
                 <td>{score.model_used}</td>
               </tr>

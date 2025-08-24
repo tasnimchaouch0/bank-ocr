@@ -11,7 +11,7 @@ const Customers: React.FC = () => {
     try {
       setLoading(true);
       const allUsers = await apiService.getAllUsers();
-      setCustomers(allUsers.filter((u: { role: string; }) => u.role !== 'admin')); // only customers
+      setCustomers(allUsers.filter((u: { role: string }) => u.role !== 'admin'));
     } catch (error) {
       console.error('Failed to load customers:', error);
     } finally {
@@ -32,21 +32,21 @@ const Customers: React.FC = () => {
     }
   };
 
-  if (loading) return <p>Loading customers...</p>;
+  if (loading) return <div>Loading customers...</div>;
 
   return (
-    <div>
-      <button className="btn btn-outline-primary mb-3" onClick={() => navigate(-1)}>
-        &larr; Back
-      </button>
+    <div className="container mt-4">
+      <h2>Customer Management</h2>
 
-      <h2 className="mb-4">Customer Management</h2>
+      <button className="btn btn-secondary mb-3" onClick={() => navigate(-1)}>
+        ← Back
+      </button>
 
       <div className="card border-0 shadow-sm">
         <div className="card-body">
           <div className="table-responsive">
-            <table className="table table-hover">
-              <thead className="table-light">
+            <table className="table table-striped mt-3">
+              <thead>
                 <tr>
                   <th>Name</th>
                   <th>Email</th>
