@@ -67,7 +67,7 @@ const ModifyStatement: React.FC = () => {
     if (!statementId) return;
     try {
       await apiService.updateBankStatement(Number(statementId), formData);
-      navigate('/bankStatement');
+      navigate('/bankStatementEdit');
     } catch (err) {
       console.error('Error updating statement:', err);
       setError('Failed to update statement');

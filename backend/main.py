@@ -27,7 +27,6 @@ from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
 import smtplib
 from email.mime.text import MIMEText
-
 app = FastAPI()
 ocr = PaddleOCR(use_angle_cls=False, lang='en')  # Load only once
 
@@ -204,7 +203,39 @@ class BankStatementResponse(BaseModel):
     created_at: datetime
     class Config:
         orm_mode = True
+class UserUpdate(BaseModel):
+    email: Optional[EmailStr] = None
+    username: Optional[str] = None
+    full_name: Optional[str] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    occupation: Optional[str] = None
+    ssn: Optional[str] = None
+    annual_income: Optional[float] = None
+    monthly_inhand_salary: Optional[float] = None
+    num_bank_accounts: Optional[int] = None
+    num_credit_card: Optional[int] = None
+    is_active: Optional[bool] = None
 
+class UserResponse(BaseModel):
+    id: int
+    email: EmailStr
+    username: str
+    full_name: str
+    age: Optional[int]
+    gender: Optional[str]
+    occupation: Optional[str]
+    ssn: Optional[str]
+    annual_income: Optional[float]
+    monthly_inhand_salary: Optional[float]
+    num_bank_accounts: Optional[int]
+    num_credit_card: Optional[int]
+    role: str
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        orm_mode = True
 class OCRResult(BaseModel):
     text: str
     confidence: float
@@ -368,6 +399,17 @@ def update_statement(
     db.commit()
     db.refresh(db_statement)
     return db_statement
+@app.get("/users/{user_id}")
+def get_user_statements(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    statements = db.query(BankStatement).filter(BankStatement.user_id == user_id).all()
+    if not statements:
+        raise HTTPException(status_code=404, detail="No bank statements found for this user")
+
+    return statements
 @app.get("/fraud/predict/{transaction_id}")
 def predict_transaction(transaction_id: int, db: Session = Depends(get_db)):
     # Fetch transaction
@@ -839,6 +881,7 @@ def toggle_user(user_id: int, db: Session = Depends(get_db), current_admin: User
     user.is_active = not user.is_active
     db.commit()
     return {"message": f"User {'activated' if user.is_active else 'deactivated'} successfully"}
+
 
 @app.post("/ocr/process", response_model=OCRResult)
 async def process_ocr(file: UploadFile = File(...), current_user: User = Depends(get_current_user)):

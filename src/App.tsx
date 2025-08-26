@@ -4,6 +4,7 @@ import { AuthPage } from './components/auth/AuthPage';
 import { Dashboard } from "./components/dashboard/Dashboard";
 // import { CreditCard } from "./components/dashboard/creditCard.tsx";
 import { BankStatement } from "./components/dashboard/bankStatement.tsx";
+import { BankStatementEdit } from "./components/dashboard/BankStatementEdit.tsx";
 import { CreditScoring } from "./components/dashboard/creditScoring";
 import UserScore from "./components/dashboard/UserScore";
 import { apiService, type User } from './services/api';
@@ -93,6 +94,7 @@ function App() {
           <Route path="/modify-statement/:statementId" element={<ModifyStatement />} />
           {/* <Route path="/creditCard" element={<CreditCard user={user} />} /> */}
           <Route path="/bankStatement" element={<BankStatement user={user} />} />
+          <Route path="/bankStatementEdit" element={<BankStatementEdit user={user} />} />
           <Route path="/score/:userId" element={<UserScore />} />
           <Route path="/fraudDetection" element={<FraudDetection />} />
           <Route path="/customers" element={<Customers />} />

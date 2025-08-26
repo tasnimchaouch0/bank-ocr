@@ -18,9 +18,17 @@ interface User {
   email: string;
   username: string;
   full_name: string;
+  age?: number | null;
+  gender?: string | null;
+  occupation?: string | null;
+  ssn?: string | null;
+  annual_income?: number | null;
+  monthly_inhand_salary?: number | null;
+  num_bank_accounts?: number;
+  num_credit_card?: number;
   role: string;
   is_active: boolean;
-  created_at: string;
+  created_at: string; // ISO date string from backend
 }
 
 interface AuthResponse {
@@ -320,6 +328,15 @@ async getCreditScore(user_id: number): Promise<CreditScoreResponse> {
   return response.json(); 
 }
 
+async updateUser(userId: number, data: Partial<User>) {
+  const response = await fetch(`/api/users/${userId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) throw new Error('Failed to update user');
+  return response.json();
+}
 
   async predictFraud(transactionId: number): Promise<FraudPrediction> {
     const response = await fetch(`${API_BASE_URL}/fraud/predict/${transactionId}`, {

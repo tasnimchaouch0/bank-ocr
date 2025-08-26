@@ -44,7 +44,7 @@ function cleanExtractedData(data: ExtractedDataRaw): BankStatementData {
   };
 }
 
-export const BankStatement: React.FC<BankStatementProps> = ({ user }) => {
+export const BankStatementEdit: React.FC<BankStatementProps> = ({ user }) => {
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'uploading' | 'success' | 'error'>('idle');
   const [extractedData, setExtractedData] = useState<BankStatementData | null>(null);
   const [currentFileName, setCurrentFileName] = useState<string>('');
@@ -256,7 +256,9 @@ export const BankStatement: React.FC<BankStatementProps> = ({ user }) => {
           <div className="header-group">
             <h4>Bank Statement Details</h4>
             <div className="button-group">
-              
+              <button onClick={handleModifyStatement} className="button button-primary">
+                <i className="fas fa-edit"></i> Modify Statement
+              </button>
               <button onClick={handleReturn} className="button button-secondary">
                 <i className="fas fa-arrow-left"></i> Back
               </button>
@@ -308,4 +310,4 @@ export const BankStatement: React.FC<BankStatementProps> = ({ user }) => {
   );
 };
 
-export default BankStatement;
+export default BankStatementEdit;
