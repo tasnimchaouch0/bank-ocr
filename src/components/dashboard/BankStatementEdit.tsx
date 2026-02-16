@@ -58,7 +58,8 @@ export const BankStatementEdit: React.FC<BankStatementProps> = ({ user }) => {
       try {
         const statements: ApiBankStatementData[] = await apiService.getUserStatements();
         if (statements.length > 0) {
-          const latest = statements[0];
+          // Sort by id descending (latest first)
+          const latest = statements.sort((a, b) => b.id - a.id)[0];
           setExtractedData({ ...JSON.parse(latest.extracted_data), id: latest.id, filename: latest.filename });
           setCurrentFileName(latest.filename);
           setHasExistingStatement(true);

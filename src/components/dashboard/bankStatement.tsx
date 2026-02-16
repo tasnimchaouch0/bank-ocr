@@ -58,7 +58,8 @@ export const BankStatement: React.FC<BankStatementProps> = ({ user }) => {
       try {
         const statements: ApiBankStatementData[] = await apiService.getUserStatements();
         if (statements.length > 0) {
-          const latest = statements[0];
+          // Sort by id descending (latest first)
+          const latest = statements.sort((a, b) => b.id - a.id)[0];
           setExtractedData({ ...JSON.parse(latest.extracted_data), id: latest.id, filename: latest.filename });
           setCurrentFileName(latest.filename);
           setHasExistingStatement(true);
@@ -127,6 +128,20 @@ export const BankStatement: React.FC<BankStatementProps> = ({ user }) => {
   const handleModifyStatement = () => {
     if (extractedData?.id) {
       navigate(`/modify-statement/${extractedData.id}`);
+    }
+  };
+  const handleDelete = async () => {
+    if (!extractedData?.id) return;
+    if (!window.confirm('Are you sure you want to delete this statement? This action cannot be undone.')) return;
+    try {
+      await apiService.deleteStatement(extractedData.id);
+      setExtractedData(null);
+      setUploadStatus('idle');
+      setCurrentFileName('');
+      setHasExistingStatement(false);
+    } catch (error) {
+      console.error('Error deleting statement:', error);
+      alert('Failed to delete statement. Please try again.');
     }
   };
 
@@ -221,6 +236,13 @@ export const BankStatement: React.FC<BankStatementProps> = ({ user }) => {
         .button-secondary:hover {
           background-color: #4b5563;
         }
+        .button-danger {
+          background-color: #dc2626;
+          color: white;
+        }
+        .button-danger:hover {
+          background-color: #b91c1c;
+        }
         .button i {
           font-size: 1rem;
         }
@@ -256,7 +278,12 @@ export const BankStatement: React.FC<BankStatementProps> = ({ user }) => {
           <div className="header-group">
             <h4>Bank Statement Details</h4>
             <div className="button-group">
-              
+              <button onClick={handleModifyStatement} className="button button-primary">
+                <i className="fas fa-edit"></i> Modify Statement
+              </button>
+              <button onClick={handleDelete} className="button button-danger">
+                <i className="fas fa-trash"></i> Delete
+              </button>
               <button onClick={handleReturn} className="button button-secondary">
                 <i className="fas fa-arrow-left"></i> Back
               </button>
@@ -283,25 +310,21 @@ export const BankStatement: React.FC<BankStatementProps> = ({ user }) => {
       ) : (
         <div className="card">
           <div className="header-group">
-            <div className="button-group">
-              <button onClick={handleModifyStatement} className="button button-primary">
-                <i className="fas fa-edit"></i> Modify Statement
-              </button>
-              <button onClick={handleReturn} className="button button-secondary">
-                <i className="fas fa-arrow-left"></i> Return
-              </button>
-            </div>
+            <h4>Upload Bank Statement</h4>
+            <button onClick={handleReturn} className="button button-secondary">
+              <i className="fas fa-arrow-left"></i> Return
+            </button>
           </div>
-        <div className="upload-card">
-          <i className="fas fa-university"></i>
-          <h5>Upload Bank Statement</h5>
-          <p>Extract transactions, balances, and account info from bank statements.</p>
-          <FileUpload
-            onFileSelect={handleFileSelect}
-            isProcessing={isProcessing}
-            uploadStatus={uploadStatus}
-          />
-        </div>
+          <div className="upload-card">
+            <i className="fas fa-university"></i>
+            <h5>Upload Your Bank Statement</h5>
+            <p>Extract transactions, balances, and account info from bank statements.</p>
+            <FileUpload
+              onFileSelect={handleFileSelect}
+              isProcessing={isProcessing}
+              uploadStatus={uploadStatus}
+            />
+          </div>
         </div>
       )}
     </div>
