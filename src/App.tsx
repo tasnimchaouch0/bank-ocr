@@ -25,7 +25,7 @@ function App() {
   // Initialize n8n chat once
   useEffect(() => {
     createChat({
-      webhookUrl: 'https://tas25.app.n8n.cloud/webhook/626c5a22-7982-4efb-8c36-49e806473d5a/chat',
+      webhookUrl: 'http://localhost:5678/webhook/9b446074-44b0-477a-ba1d-331076f9230e/chat',
       initialMessages: [
         'Hi there! 👋 I am bankOCR agent welcome to bank ocr , How can I help you ? '
       ],

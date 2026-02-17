@@ -115,14 +115,14 @@ const formatDate = (str: string): string => {
 };
 
 const extractSummary = (text: string) => {
-  // Try pattern 1: "Balance at [date]: £/$ amount" - get all matches
-  const balanceMatches = [...text.matchAll(/Balance at\s+\d+\s+\w+[:\s]+[£$]\s*([\d,]+\.?\d*)/gi)];
+  // Try pattern 1: "Balance at [date]: £/$ amount" - get all matches with improved number pattern
+  const balanceMatches = [...text.matchAll(/Balance at\s+\d+\s+\w+[:\s]+[£$]?\s*([\d,\.]+)/gi)];
   const openingMatch1 = balanceMatches.length > 0 ? balanceMatches[0] : null;
   const closingMatch1 = balanceMatches.length > 1 ? balanceMatches[1] : null;
   
   // Try pattern 2: Traditional "Opening Balance" / "Closing Balance"
-  const openingMatch2 = text.match(/Opening Balance[^\d]*(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i);
-  const closingMatch2 = text.match(/Closing Balance(?:\s+\w+)*[^\d$£]*[£$]?([\d]{1,3}(?:[.,]\d{3})*(?:[.,]\d{2}))/i);
+  const openingMatch2 = text.match(/Opening Balance[^\d]*([\d,\.]+)/i);
+  const closingMatch2 = text.match(/Closing Balance(?:\s+\w+)*[^\d$£]*[£$]?\s*([\d,\.]+)/i);
   
   // Try pattern 3: "Total money in/out"
   const moneyInMatch = text.match(/Total money in[:\s]+[£$]\s*([\d,]+\.?\d*)/i);
@@ -198,41 +198,61 @@ const extractTransactions = (text: string): Transaction[] => {
     // Skip if we haven't seen any date yet
     if (!currentDate) continue;
 
-    // Extract all amounts with positions (skip the date number)
+    // Extract all amounts with positions (skip the date number if present)
     const amounts: Array<{value: number, position: number}> = [];
     const dateEndPos = dateMatch ? (dateMatch.index || 0) + dateMatch[0].length : 0;
     
-    // Find all numbers after the date (or from start if no date)
-    const numberPattern = /(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/g;
+    // Find all numbers after the date - support various formats with commas and dots
+    // Matches: 123.45, 1,234.56, 1.234,56, 44.079.83, 40,000,00, etc.
+    // Exclude time patterns (HH:MM)
+    const numberPattern = /([\d]{1,3}(?:[,\.][\d]{3})*(?:[,\.][\d]{1,2})?)/g;
     let match;
     while ((match = numberPattern.exec(line)) !== null) {
-      if ((match.index || 0) > dateEndPos) {
+      const matchPos = match.index || 0;
+      const matchStr = match[1];
+      
+      // Skip if this looks like a time (preceded by digits and colon)
+      const beforeMatch = line.substring(Math.max(0, matchPos - 3), matchPos);
+      if (/\d+:$/.test(beforeMatch)) continue; // Skip minutes in HH:MM
+      
+      // Skip if this is followed by a colon (hours in HH:MM)
+      const afterMatch = line.substring(matchPos + matchStr.length, matchPos + matchStr.length + 1);
+      if (afterMatch === ':') continue;
+      
+      if (matchPos > dateEndPos) {
         amounts.push({
-          value: parseAmount(match[1]),
-          position: match.index || 0
+          value: parseAmount(matchStr),
+          position: matchPos
         });
       }
     }
 
-    // If no date and no amounts, it's a continuation line
-    if (!dateMatch && amounts.length === 0) {
-      if (txns.length > 0) {
-        const cleanedLine = line.trim();
-        if (cleanedLine) {
-          txns[txns.length - 1].description += ' ' + cleanedLine;
+    // Check if amounts exist and classify them first
+    if (amounts.length === 0) {
+      // No amounts found - check if this line has a new date
+      if (!dateMatch) {
+        // No date, no amounts → continuation line
+        if (txns.length > 0) {
+          const cleanedLine = line.trim();
+          if (cleanedLine) {
+            txns[txns.length - 1].description += ' ' + cleanedLine;
+          }
         }
+        continue;
       }
-      continue;
+      // Has a date but no amounts → might be a transaction where description/balance is on next line
+      // Continue processing to check next line
     }
-
-    // If no amounts at all, skip (or it's just description continuation)
-    if (amounts.length === 0) continue;
 
     // Classify amounts based on column positions
     let moneyOut = null, moneyIn = null, balance = null;
     
     // Sort amounts by position to process left to right
     amounts.sort((a, b) => a.position - b.position);
+    
+    // Balance must be in the rightmost position and reasonably close to the balance column
+    // Use a threshold: balance should be at least 80% of the way to the expected balance column
+    const minBalancePosition = balanceCol * 0.8;
     
     for (const amt of amounts) {
       const pos = amt.position;
@@ -246,7 +266,8 @@ const extractTransactions = (text: string): Transaction[] => {
         moneyOut = amt.value;
       } else if (pos < inBalanceBoundary && !moneyIn) {
         moneyIn = amt.value;
-      } else if (!balance) {
+      } else if (pos >= minBalancePosition && !balance) {
+        // Only accept as balance if it's far enough to the right
         balance = amt.value;
       }
     }
@@ -254,38 +275,80 @@ const extractTransactions = (text: string): Transaction[] => {
     // Extract description (between date and first amount, or from start if no date)
     let desc = line.substring(dateEndPos, amounts.length > 0 ? amounts[0].position : line.length).trim();
 
-    // If no description but we have amounts, check next line for description
-    if (!desc && (moneyOut || moneyIn) && i + 1 < lines.length) {
+    // KEY RULE: If there's no balance AND no new date, this is a continuation line
+    // But if there's a NEW date (dateMatch), it's the start of a new transaction even without balance yet
+    if (!balance && !dateMatch) {
+      if (txns.length > 0) {
+        // Append the description and any visible amounts to the previous transaction
+        const cleanedLine = line.trim();
+        if (cleanedLine) {
+          txns[txns.length - 1].description += ' ' + cleanedLine;
+        }
+      }
+      continue;
+    }
+
+    // If no description or no balance, check next line
+    if (((!desc && (moneyOut || moneyIn)) || !balance) && i + 1 < lines.length) {
       const nextLine = lines[i + 1];
+      // Only check next line if it doesn't start with a new date
       if (nextLine && !/^\s*\d{1,2}\s+\w+/.test(nextLine)) {
-        // Next line doesn't start with a date, so it's the description
-        // Extract description and check for balance amount
+        // Next line doesn't start with a date, so it contains description and/or balance
         const nextAmounts: Array<{value: number, position: number}> = [];
-        const nextNumberPattern = /(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/g;
+        const nextNumberPattern = /([\d]{1,3}(?:[,\.][\d]{3})*(?:[,\.][\d]{1,2})?)/g;
         let nextMatch;
         while ((nextMatch = nextNumberPattern.exec(nextLine)) !== null) {
+          const matchPos = nextMatch.index || 0;
+          const matchStr = nextMatch[1];
+          
+          // Skip time patterns
+          const beforeMatch = nextLine.substring(Math.max(0, matchPos - 3), matchPos);
+          if (/\d+:$/.test(beforeMatch)) continue;
+          const afterMatch = nextLine.substring(matchPos + matchStr.length, matchPos + matchStr.length + 1);
+          if (afterMatch === ':') continue;
+          
           nextAmounts.push({
-            value: parseAmount(nextMatch[1]),
-            position: nextMatch.index || 0
+            value: parseAmount(matchStr),
+            position: matchPos
           });
         }
         
-        // Extract description from next line (everything before first amount)
-        if (nextAmounts.length > 0) {
+        // Extract description from next line if we don't have one
+        if (!desc && nextAmounts.length > 0) {
           desc = nextLine.substring(0, nextAmounts[0].position).trim();
-          // If we don't have a balance yet, use the last amount from next line
-          if (!balance && nextAmounts.length > 0) {
-            balance = nextAmounts[nextAmounts.length - 1].value;
-          }
-        } else {
+        } else if (!desc) {
           desc = nextLine.trim();
         }
+        
+        // Look for balance on next line if we don't have one
+        if (!balance && nextAmounts.length > 0) {
+          // Check for balance in rightmost position
+          const rightmostAmt = nextAmounts[nextAmounts.length - 1];
+          if (rightmostAmt.position >= minBalancePosition) {
+            balance = rightmostAmt.value;
+          }
+          
+          // Also check for money in/out if we don't have them yet
+          if (!moneyOut && !moneyIn && nextAmounts.length > 1) {
+            // First amount might be money out/in, last is balance
+            const firstAmt = nextAmounts[0];
+            if (firstAmt.position < minBalancePosition) {
+              if (firstAmt.position < (moneyOutCol + moneyInCol) / 2) {
+                moneyOut = firstAmt.value;
+              } else {
+                moneyIn = firstAmt.value;
+              }
+            }
+          }
+        }
+        
         i++; // Skip the next line since we consumed it
       }
     }
 
-    // Only add if we have a description and either moneyOut or moneyIn
-    if (desc && (moneyOut || moneyIn)) {
+    // Only add transaction if we have a valid transaction:
+    // Must have: balance, description, and (moneyOut or moneyIn)
+    if (balance && desc && (moneyOut || moneyIn)) {
       txns.push({
         date: parseTransactionDate(currentDate),
         description: desc,
@@ -339,7 +402,7 @@ const parseTransactionLine = (line: string, currentDate: string): Transaction | 
   }
   
   // Format 2: "Date Description Amount Balance" (3 columns of numbers)
-  const format2Match = line.match(/^(\d{1,2}\s+\w+|\w{3,9}\s+\d{1,2})?\s*(.+?)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s*$/);
+  const format2Match = line.match(/^(\d{1,2}\s+\w+|\w{3,9}\s+\d{1,2})?\s*(.+?)\s+([\d,\.]+)\s+([\d,\.]+)\s+([\d,\.]+)\s*$/);
   if (format2Match) {
     const [, date, desc, col1, col2, col3] = format2Match;
     const dateStr = date || currentDate;
@@ -369,7 +432,7 @@ const parseTransactionLine = (line: string, currentDate: string): Transaction | 
   }
   
   // Format 3: Traditional format with 2 numbers
-  const format3Match = line.match(/^(\w{3,9}\s+\d{1,2})?\s*(.+?)\s+([\d,]+\.?\d*)\s+([\d,]+\.?\d*)\s*$/);
+  const format3Match = line.match(/^(\w{3,9}\s+\d{1,2})?\s*(.+?)\s+([\d,\.]+)\s+([\d,\.]+)\s*$/);
   if (format3Match) {
     const [, date, desc, col1, col2] = format3Match;
     const dateStr = date || currentDate;
@@ -433,9 +496,49 @@ const parseTransactionDate = (str: string): string => {
 
 const parseAmount = (s: string): number => {
   if (!s) return 0;
-  // Remove currency symbols (£, $), spaces, and handle comma/dot separators
-  const cleaned = s.replace(/[£$\s]/g, '')
-                   .replace(/,/g, '');  // Remove commas used as thousand separators
+  // Remove currency symbols (£, $), spaces
+  let cleaned = s.replace(/[£$\s]/g, '');
+  
+  // Handle various formats:
+  // UK/US: 42,500.50 (comma=thousand, dot=decimal)
+  // European: 42.500,50 (dot=thousand, comma=decimal)
+  
+  const dotCount = (cleaned.match(/\./g) || []).length;
+  const commaCount = (cleaned.match(/,/g) || []).length;
+  
+  // If both separators present, the one that appears LAST is typically the decimal
+  if (dotCount >= 1 && commaCount >= 1) {
+    const lastDotPos = cleaned.lastIndexOf('.');
+    const lastCommaPos = cleaned.lastIndexOf(',');
+    
+    if (lastDotPos > lastCommaPos) {
+      // Dot comes after comma → UK/US format (42,500.50)
+      // Remove commas, keep dots
+      cleaned = cleaned.replace(/,/g, '');
+    } else {
+      // Comma comes after dot → European format (42.500,50)
+      // Remove dots, replace comma with dot
+      cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+    }
+  } else if (dotCount > 1) {
+    // Multiple dots, no commas → dots are thousand separators (European style)
+    // E.g., 44.079.83 → 44079.83
+    cleaned = cleaned.replace(/\./g, '');
+  } else if (commaCount > 1) {
+    // Multiple commas, no dots → commas are thousand separators
+    cleaned = cleaned.replace(/,/g, '');
+  } else if (commaCount === 1 && dotCount === 0) {
+    // Single comma, no dot → check if decimal or thousand
+    // If 2 digits after comma, it's decimal; otherwise thousand
+    const parts = cleaned.split(',');
+    if (parts[1] && parts[1].length === 2) {
+      cleaned = cleaned.replace(',', '.'); // Decimal (European)
+    } else {
+      cleaned = cleaned.replace(',', ''); // Thousand separator
+    }
+  }
+  // else: single dot or no separators → already in correct format
+  
   return parseFloat(cleaned) || 0;
 };
 
@@ -443,27 +546,38 @@ const parseAmountFixed = (s: string): number => {
   if (!s) return 0;
   // Handle cases like "40,000,00" which should be "40,000.00"
   // Also handle "44.079.83" which should be "44,079.83"
-  const cleaned = s.replace(/[£$\s]/g, '');
+  let cleaned = s.replace(/[£$\s]/g, '');
   
-  // Pattern 1: "40,000,00" (comma before last 2 digits)
-  const malformedComma = /^([\d,]+),([\d]{2})$/;
-  if (malformedComma.test(cleaned)) {
-    const withoutCommas = cleaned.replace(/,/g, '');
-    return parseFloat(withoutCommas.slice(0, -2) + '.' + withoutCommas.slice(-2));
+  // Pattern 1: "40,000,00" (commas as thousand sep, comma before last 2 digits as decimal)
+  // Example: 40,000,00 -> 40000.00
+  if (/^[\d,]+,[\d]{2}$/.test(cleaned)) {
+    const allDigits = cleaned.replace(/,/g, '');
+    return parseFloat(allDigits.slice(0, -2) + '.' + allDigits.slice(-2));
   }
   
-  // Pattern 2: "44.079.83" (dots used as both thousand separator and decimal)
-  const malformedDot = /^([\d]+)\.([\d]{3})\.([\d]{2})$/;
-  if (malformedDot.test(cleaned)) {
-    return parseFloat(cleaned.replace(/\./g, '').slice(0, -2) + '.' + cleaned.slice(-2));
+  // Pattern 2: "44.079.83" (dots as thousand sep and decimal)
+  // Last 2 digits after final separator are decimals
+  if (/^[\d\.]+\.[\d]{2}$/.test(cleaned) && (cleaned.match(/\./g) || []).length > 1) {
+    const allDigits = cleaned.replace(/\./g, '');
+    return parseFloat(allDigits.slice(0, -2) + '.' + allDigits.slice(-2));
   }
   
-  // Pattern 3: "44.079" should be "44079" (no decimals)
-  const shortDot = /^([\d]+)\.([\d]{3})$/;
-  if (shortDot.test(cleaned)) {
-    return parseFloat(cleaned.replace(/\./g, ''));
+  // Pattern 3: Mixed separators - use the last one as decimal point
+  const lastDot = cleaned.lastIndexOf('.');
+  const lastComma = cleaned.lastIndexOf(',');
+  
+  if (lastDot > lastComma && lastDot > 0) {
+    // Dot is decimal point
+    const beforeDot = cleaned.substring(0, lastDot).replace(/[,\.]/g, '');
+    const afterDot = cleaned.substring(lastDot + 1);
+    return parseFloat(beforeDot + '.' + afterDot);
+  } else if (lastComma > lastDot && lastComma > 0) {
+    // Comma is decimal point
+    const beforeComma = cleaned.substring(0, lastComma).replace(/[,\.]/g, '');
+    const afterComma = cleaned.substring(lastComma + 1);
+    return parseFloat(beforeComma + '.' + afterComma);
   }
   
-  // Otherwise, treat commas as thousand separators and dots as decimal
-  return parseFloat(cleaned.replace(/,/g, '')) || 0;
+  // Default: remove all separators
+  return parseFloat(cleaned.replace(/[,\.]/g, '')) || 0;
 };
