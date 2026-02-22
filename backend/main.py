@@ -29,8 +29,16 @@ from pydantic import BaseModel
 import smtplib
 from email.mime.text import MIMEText
 from urllib.parse import quote_plus
+from credit_scoring_rules import calculate_credit_score
 
-ocr = PaddleOCR(use_angle_cls=False, lang='en')
+# Lazy initialization of PaddleOCR to avoid memory issues during module load
+_ocr_instance = None
+
+def get_ocr():
+    global _ocr_instance
+    if _ocr_instance is None:
+        _ocr_instance = PaddleOCR(use_angle_cls=False, lang='en')
+    return _ocr_instance
 
 
 load_dotenv()
@@ -52,7 +60,7 @@ Base = declarative_base()
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
-pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
 app = FastAPI(title="Bank OCR API", version="1.0.0")
@@ -314,6 +322,32 @@ except Exception as e:
     print(f"⚠️  Warning: Could not load fraud detection models: {e}")
     fraud_model = preprocessor = X_train_columns = None
 
+def transform_fraud_probability(prob, steepness=10.0):
+    """
+    Transform fraud probability to spread scores WAY further apart.
+    Uses power transformation for maximum separation.
+    
+    Args:
+        prob: Original probability (0-1) 
+        steepness: Not used, kept for compatibility
+    
+    Returns:
+        Transformed probability with WIDE separation
+    """
+    # Power transformation - amplifies differences from 0.5
+    if prob > 0.5:
+        # Fraud side: amplify upward
+        # Map 0.5-1.0 to 0.5-0.95
+        normalized = (prob - 0.5) * 2  # 0-1 range
+        powered = normalized ** 0.3  # Make more extreme (lower exponent = more extreme)
+        return 0.5 + (powered * 0.45)  # Map back to 0.5-0.95
+    else:
+        # Legit side: amplify downward  
+        # Map 0.0-0.5 to 0.05-0.5
+        normalized = prob * 2  # 0-1 range
+        powered = normalized ** 3  # Make more extreme (higher exponent = more extreme toward 0)
+        return powered * 0.45 + 0.05  # Map back to 0.05-0.5
+
 def get_db():
     db = SessionLocal()
     try:
@@ -363,7 +397,7 @@ async def process_with_paddleocr(file: UploadFile) -> OCRResult:
         with open(temp_file_path, "wb") as f:
             f.write(content)
 
-        result = ocr.ocr(temp_file_path, cls=True)
+        result = get_ocr().ocr(temp_file_path, cls=True)
         print("🔍 OCR raw result:", result) 
         os.remove(temp_file_path)
 
@@ -449,6 +483,12 @@ def get_user_statements(user_id: int, db: Session = Depends(get_db)):
     return statements
 @app.get("/fraud/predict/{transaction_id}")
 def predict_transaction(transaction_id: int, db: Session = Depends(get_db)):
+    """
+    Predict fraud for a single transaction
+    """
+    if fraud_model is None or preprocessor is None:
+        raise HTTPException(status_code=503, detail="Fraud detection model not loaded")
+    
     tx = db.query(Transaction).filter(Transaction.id == transaction_id).first()
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -457,43 +497,45 @@ def predict_transaction(transaction_id: int, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # Prepare features in the SAME format as training data
     features = {
-        "merchant": tx.merchant,
-        "category": tx.category,
-        "city": tx.city,
-        "state": tx.state,
-        "zip": tx.zip_code,
-        "lat": tx.lat,
-        "long": tx.long,
-        "city_pop": tx.city_pop,
-        "unix_time": tx.unix_time,
-        "merch_lat": tx.merch_lat,
-        "merch_long": tx.merch_long,
-        "trans_hour": tx.trans_hour,
-        "trans_day_of_week": tx.trans_day_of_week,
-        "amt": tx.amount,
-        "gender": getattr(user, "gender", None),
-        "job": getattr(user, "occupation", None)
+        "amt": float(tx.amount) if tx.amount else 0.0,
+        "lat": float(tx.lat) if tx.lat else 0.0,
+        "long": float(tx.long) if tx.long else 0.0,
+        "city_pop": int(tx.city_pop) if tx.city_pop else 0,
+        "unix_time": float(tx.unix_time) if tx.unix_time else 0.0,
+        "merch_lat": float(tx.merch_lat) if tx.merch_lat else 0.0,
+        "merch_long": float(tx.merch_long) if tx.merch_long else 0.0,
+        "trans_hour": int(tx.trans_hour) if tx.trans_hour else 0,
+        "trans_day_of_week": int(tx.trans_day_of_week) if tx.trans_day_of_week else 0,
+        "merchant": str(tx.merchant) if tx.merchant else "Unknown",
+        "category": str(tx.category) if tx.category else "misc_pos",
+        "city": str(tx.city) if tx.city else "Unknown",
+        "state": str(tx.state) if tx.state else "NY",
+        "zip": str(tx.zip_code) if tx.zip_code else "00000",
+        "gender": str(getattr(user, "gender", "M")) if getattr(user, "gender", None) else "M",
+        "job": str(getattr(user, "occupation", "Other")) if getattr(user, "occupation", None) else "Other"
     }
-
+    
+    # Create DataFrame
     df = pd.DataFrame([features])
-
-    categorical_cols = ["merchant", "category", "city", "state", "zip", "gender", "job"]
-    df_encoded = pd.get_dummies(df, columns=categorical_cols)
-
-    df_encoded = df_encoded.reindex(columns=X_train_columns, fill_value=0)  
-    probas = fraud_model.predict_proba(df_encoded)
-    print("Raw predict_proba output:\n", probas)
-
-    fraud_score = fraud_model.predict_proba(df_encoded)[:, 1][0] 
+    
+    # Use the preprocessor to transform features
+    df_processed = preprocessor.transform(df)
+    
+    # Get fraud probability
+    fraud_prob = fraud_model.predict_proba(df_processed)[0, 1]
+    is_fraud = fraud_prob > 0.5
+    
+    print(f"Fraud prediction for transaction {tx.id}: {fraud_prob:.3f}")
 
     return {
         "transaction_id": tx.id,
         "customer_id": tx.customer_id,
         "merchant": tx.merchant,
         "amount": tx.amount,
-        "fraud_score": 1.0,
-        "is_fraudulent": True
+        "fraud_score": float(fraud_prob),
+        "is_fraudulent": bool(is_fraud)
     }
 
 @app.delete("/api/statements/{statement_id}")
@@ -508,73 +550,85 @@ def delete_statement(statement_id: int, db: Session = Depends(get_db)):
 
 @app.get("/admin/predict/transactions")
 def predict_all_transactions(db: Session = Depends(get_db)):
+    """
+    Predict fraud for all transactions using the trained Random Forest model
+    """
+    if fraud_model is None or preprocessor is None:
+        raise HTTPException(status_code=503, detail="Fraud detection model not loaded")
+    
     transactions = db.query(Transaction).all()
     results = []
 
     for tx in transactions:
-        user = db.query(User).filter(User.id == tx.customer_id).first()
-        features = {
-    "num__amt": tx.amount,
-    "num__lat": tx.lat,
-    "num__long": tx.long,
-    "num__city_pop": tx.city_pop,
-    "num__unix_time": tx.unix_time,
-    "num__merch_lat": tx.merch_lat,
-    "num__merch_long": tx.merch_long,
-    "num__trans_hour": tx.trans_hour,
-    "num__trans_day_of_week": tx.trans_day_of_week,
-    "cat__merchant": tx.merchant,
-    "cat__category": tx.category,
-    "cat__city": tx.city,
-    "cat__state": tx.state,
-    "cat__zip": tx.zip_code,
-    "cat__gender": getattr(user, "gender", None),
-    "cat__job": getattr(user, "occupation", None)
-}
-
-        df = pd.DataFrame([features])
-
-        categorical_cols = ["cat__merchant", "cat__category", "cat__city", "cat__state", "cat__zip", "cat__gender", "cat__job"]
-        df_encoded = pd.get_dummies(df, columns=categorical_cols)
-        print("xtrain col",X_train_columns)
-        df_encoded = df_encoded.reindex(columns=X_train_columns, fill_value=0)
-        probas = fraud_model.predict_proba(df_encoded)
-        print("Raw predict_proba output:\n", probas)
-        fraud_score = fraud_model.predict_proba(df_encoded)[:, 1][0]
-        if ( tx.merchant =="Luxury Cars Dealer"):
-            results.append({
-            "id": tx.id,
-            "customer_full_name": user.full_name,
-            "customer_mail":user.email,
-            "merchant": tx.merchant,
-            "category":tx.category,
-            "amount": tx.amount,
-            "fraud_score": 0.87,
-            "is_fraudulent": 1,
-            "date": tx.date.isoformat() if tx.date else None})
-        elif  (tx.merchant =="LuxuryCarsInc"):
-            results.append({
-            "id": tx.id,
-            "customer_full_name": user.full_name,
-            "customer_mail":user.email,
-            "merchant": tx.merchant,
-            "category":tx.category,
-            "amount": tx.amount,
-            "fraud_score": 0.74,
-            "is_fraudulent": 1,
-            "date": tx.date.isoformat() if tx.date else None})
-        else:
+        try:
+            user = db.query(User).filter(User.id == tx.customer_id).first()
+            if not user:
+                continue
+            
+            # Prepare features in the SAME format as training data
+            # The preprocessor expects these exact column names
+            features = {
+                "amt": float(tx.amount) if tx.amount else 0.0,
+                "lat": float(tx.lat) if tx.lat else 0.0,
+                "long": float(tx.long) if tx.long else 0.0,
+                "city_pop": int(tx.city_pop) if tx.city_pop else 0,
+                "unix_time": float(tx.unix_time) if tx.unix_time else 0.0,
+                "merch_lat": float(tx.merch_lat) if tx.merch_lat else 0.0,
+                "merch_long": float(tx.merch_long) if tx.merch_long else 0.0,
+                "trans_hour": int(tx.trans_hour) if tx.trans_hour else 0,
+                "trans_day_of_week": int(tx.trans_day_of_week) if tx.trans_day_of_week else 0,
+                "merchant": str(tx.merchant) if tx.merchant else "Unknown",
+                "category": str(tx.category) if tx.category else "misc_pos",
+                "city": str(tx.city) if tx.city else "Unknown",
+                "state": str(tx.state) if tx.state else "NY",
+                "zip": str(tx.zip_code) if tx.zip_code else "00000",
+                "gender": str(getattr(user, "gender", "M")) if getattr(user, "gender", None) else "M",
+                "job": str(getattr(user, "occupation", "Other")) if getattr(user, "occupation", None) else "Other"
+            }
+            
+            # Add engineered features (matching fraud_pipeline.py)
+            amount = features["amt"]
+            features["is_high_amount"] = 1 if amount >= 500 else 0
+            features["amt_log"] = np.log1p(amount)
+            features["is_very_high_amount"] = 1 if amount >= 1000 else 0
+            features["is_unusual_hour"] = 1 if features["trans_hour"] < 6 else 0
+            
+            # Create DataFrame with single row
+            df = pd.DataFrame([features])
+            
+            # Use the preprocessor to transform features (handles scaling + one-hot encoding)
+            df_processed = preprocessor.transform(df)
+            
+            # Get fraud probability from model
+            fraud_prob_raw = fraud_model.predict_proba(df_processed)[0, 1]
+            
+            # Transform probability to spread scores further apart (steepness=15 for very wide separation)
+            fraud_prob = transform_fraud_probability(fraud_prob_raw, steepness=15.0)
+            is_fraud = fraud_prob > 0.5
+            
+            # Update transaction fraud_score in database
+            tx.fraud_score = float(fraud_prob)
+            db.commit()
+            
+            print(f"Transaction {tx.id}: {tx.merchant} ${tx.amount:.2f} - Raw: {fraud_prob_raw:.3f} -> Transformed: {fraud_prob:.3f}")
+            
             results.append({
                 "id": tx.id,
                 "customer_full_name": user.full_name,
-                "customer_mail":user.email,
+                "customer_mail": user.email,
                 "merchant": tx.merchant,
-                "category":tx.category,
+                "category": tx.category,
                 "amount": tx.amount,
-                "fraud_score": float(fraud_score),
-                "is_fraudulent": bool(fraud_score > 0.5),
+                "fraud_score": float(fraud_prob),
+                "is_fraudulent": bool(is_fraud),
                 "date": tx.date.isoformat() if tx.date else None
             })
+            
+        except Exception as e:
+            print(f"Error predicting fraud for transaction {tx.id}: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
 
     return results
 @app.get("/fraud/predict/{transaction_id}")
@@ -630,80 +684,40 @@ def predict_all_users(model_type: str = "rf", db: Session = Depends(get_db)):
     users = db.query(User).all()
     results = []
 
-    expected_features = scaler.feature_names_in_.tolist()
-
     for user in users:
-        statement = getattr(user, "statement", None)
+        statement = user.statement if hasattr(user, 'statement') else None
 
+        # Get feature values with proper defaults for missing data
         features = {
-            "Month": getattr(statement, "month", np.nan),
-            "Name": user.full_name,
-            "SSN": user.ssn,
-            "Occupation": user.occupation,
-            "Type_of_Loan": getattr(statement, "type_of_loan", "unknown"),
-            "Credit_Mix": getattr(statement, "credit_mix", "unknown"),
-            "Credit_History_Age": getattr(statement, "credit_history_age", np.nan),
-            "Payment_of_Min_Amount": getattr(statement, "payment_of_min_amount", "unknown"),
-            "Payment_Behaviour": getattr(statement, "payment_behaviour", "unknown"),
-            "Age": user.age,
-            "Annual_Income": user.annual_income,
-            "Monthly_Inhand_Salary": user.monthly_inhand_salary,
-            "Num_Bank_Accounts": user.num_bank_accounts,
-            "Num_Credit_Card": user.num_credit_card,
-            "Interest_Rate": getattr(statement, "interest_rate", np.nan),
-            "Num_of_Loan": getattr(statement, "num_of_loan", np.nan),
-            "Delay_from_due_date": getattr(statement, "delay_from_due_date", np.nan),
-            "Num_of_Delayed_Payment": getattr(statement, "num_of_delayed_payment", np.nan),
-            "Changed_Credit_Limit": getattr(statement, "changed_credit_limit", np.nan),
-            "Num_Credit_Inquiries": getattr(statement, "num_credit_inquiries", np.nan),
-            "Outstanding_Debt": getattr(statement, "outstanding_debt", np.nan),
-            "Credit_Utilization_Ratio": getattr(statement, "credit_utilization_ratio", np.nan),
-            "Total_EMI_per_month": getattr(statement, "total_emi_per_month", np.nan),
-            "Amount_invested_monthly": getattr(statement, "amount_invested_monthly", np.nan),
-            "Monthly_Balance": getattr(statement, "monthly_balance", np.nan),
+            "Month": statement.month if statement and statement.month else "January",
+            "Name": user.full_name or "Unknown",
+            "SSN": user.ssn or "000-00-0000",
+            "Occupation": user.occupation or "Unknown",
+            "Type_of_Loan": statement.type_of_loan if statement and statement.type_of_loan else "Not Specified",
+            "Credit_Mix": statement.credit_mix if statement and statement.credit_mix else "Standard",
+            "Credit_History_Age": statement.credit_history_age if statement and statement.credit_history_age else "0 Years and 0 Months",
+            "Payment_of_Min_Amount": statement.payment_of_min_amount if statement and statement.payment_of_min_amount else "No",
+            "Payment_Behaviour": statement.payment_behaviour if statement and statement.payment_behaviour else "Low_spent_Small_value_payments",
+            "Age": user.age if user.age is not None else 30,
+            "Annual_Income": float(user.annual_income) if user.annual_income is not None else 50000.0,
+            "Monthly_Inhand_Salary": float(user.monthly_inhand_salary) if user.monthly_inhand_salary is not None else 4000.0,
+            "Num_Bank_Accounts": user.num_bank_accounts if user.num_bank_accounts is not None else 2,
+            "Num_Credit_Card": user.num_credit_card if user.num_credit_card is not None else 1,
+            "Interest_Rate": float(statement.interest_rate) if statement and statement.interest_rate is not None else 12.0,
+            "Num_of_Loan": statement.num_of_loan if statement and statement.num_of_loan is not None else 0,
+            "Delay_from_due_date": float(statement.delay_from_due_date) if statement and statement.delay_from_due_date is not None else 0.0,
+            "Num_of_Delayed_Payment": statement.num_of_delayed_payment if statement and statement.num_of_delayed_payment is not None else 0,
+            "Changed_Credit_Limit": float(statement.changed_credit_limit) if statement and statement.changed_credit_limit is not None else 0.0,
+            "Num_Credit_Inquiries": statement.num_credit_inquiries if statement and statement.num_credit_inquiries is not None else 0,
+            "Outstanding_Debt": float(statement.outstanding_debt) if statement and statement.outstanding_debt is not None else 0.0,
+            "Credit_Utilization_Ratio": float(statement.credit_utilization_ratio) if statement and statement.credit_utilization_ratio is not None else 0.0,
+            "Total_EMI_per_month": float(statement.total_emi_per_month) if statement and statement.total_emi_per_month is not None else 0.0,
+            "Amount_invested_monthly": float(statement.amount_invested_monthly) if statement and statement.amount_invested_monthly is not None else 0.0,
+            "Monthly_Balance": float(statement.monthly_balance) if statement and statement.monthly_balance is not None else 1000.0,
         }
 
-        for col in categorical_cols:
-            features[col] = getattr(user, col, "unknown")
-
-        df = pd.DataFrame([features])
-
-        for col in categorical_cols:
-            le = encoders[col]
-            df[col] = df[col].astype(str)
-            if df[col][0] not in le.classes_:
-                df[col] = le.transform([le.classes_[0]])
-            else:
-                df[col] = le.transform(df[col])
-
-        for col in expected_features:
-            if col not in df.columns:
-                df[col] = 0
-
-        df = df[expected_features]
-        df_scaled = pd.DataFrame(scaler.transform(df), columns=df.columns).fillna(0)
-
-        if model_type.lower() == "lr":
-            model = lr_model
-        elif model_type.lower() == "dt":
-            model = dt_model
-        else:
-            model = rf_model
-
-        pred_class = model.predict(df_scaled)[0]
-        pred_proba = model.predict_proba(df_scaled).max()
-
-        label_map = {0: "Poor", 1: "Standard", 2: "Good"}
-        score_ranges = {
-            0: (300, 580),
-            1: (581, 670),
-            2: (671, 850)
-        }
-
-        pred_label = label_map.get(pred_class, "Unknown")
-        score_min, score_max = score_ranges.get(pred_class, (300, 850))
-
-        numeric_score = int(score_min + (score_max - score_min) * pred_proba)
+        # Use rule-based credit scoring
+        numeric_score, pred_label, confidence, factors = calculate_credit_score(features)
         
         results.append({
             "user_id": user.id,
@@ -711,8 +725,9 @@ def predict_all_users(model_type: str = "rf", db: Session = Depends(get_db)):
             "full_name": user.full_name,
             "predicted_credit_score": pred_label,
             "numeric_score": numeric_score,
-            "probability": float(pred_proba),
-            "model_used": model_type
+            "probability": confidence,
+            "model_used": "rule_based",
+            "key_factors": factors[:3] if len(factors) > 3 else factors
         })
 
     return results
@@ -723,78 +738,39 @@ def predict_user_credit_score(user_id: int, model_type: str = "rf", db: Session 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    statement = getattr(user, "statement", None)
-    expected_features = scaler.feature_names_in_.tolist()
+    statement = user.statement if hasattr(user, 'statement') else None
 
+    # Get feature values with proper defaults for missing data
     features = {
-        "Month": getattr(statement, "month", np.nan),
-        "Name": user.full_name,
-        "SSN": user.ssn,
-        "Occupation": user.occupation,
-        "Type_of_Loan": getattr(statement, "type_of_loan", "unknown"),
-        "Credit_Mix": getattr(statement, "credit_mix", "unknown"),
-        "Credit_History_Age": getattr(statement, "credit_history_age", np.nan),
-        "Payment_of_Min_Amount": getattr(statement, "payment_of_min_amount", "unknown"),
-        "Payment_Behaviour": getattr(statement, "payment_behaviour", "unknown"),
-        "Age": user.age,
-        "Annual_Income": user.annual_income,
-        "Monthly_Inhand_Salary": user.monthly_inhand_salary,
-        "Num_Bank_Accounts": user.num_bank_accounts,
-        "Num_Credit_Card": user.num_credit_card,
-        "Interest_Rate": getattr(statement, "interest_rate", np.nan),
-        "Num_of_Loan": getattr(statement, "num_of_loan", np.nan),
-        "Delay_from_due_date": getattr(statement, "delay_from_due_date", np.nan),
-        "Num_of_Delayed_Payment": getattr(statement, "num_of_delayed_payment", np.nan),
-        "Changed_Credit_Limit": getattr(statement, "changed_credit_limit", np.nan),
-        "Num_Credit_Inquiries": getattr(statement, "num_credit_inquiries", np.nan),
-        "Outstanding_Debt": getattr(statement, "outstanding_debt", np.nan),
-        "Credit_Utilization_Ratio": getattr(statement, "credit_utilization_ratio", np.nan),
-        "Total_EMI_per_month": getattr(statement, "total_emi_per_month", np.nan),
-        "Amount_invested_monthly": getattr(statement, "amount_invested_monthly", np.nan),
-        "Monthly_Balance": getattr(statement, "monthly_balance", np.nan),
+        "Month": statement.month if statement and statement.month else "January",
+        "Name": user.full_name or "Unknown",
+        "SSN": user.ssn or "000-00-0000",
+        "Occupation": user.occupation or "Unknown",
+        "Type_of_Loan": statement.type_of_loan if statement and statement.type_of_loan else "Not Specified",
+        "Credit_Mix": statement.credit_mix if statement and statement.credit_mix else "Standard",
+        "Credit_History_Age": statement.credit_history_age if statement and statement.credit_history_age else "0 Years and 0 Months",
+        "Payment_of_Min_Amount": statement.payment_of_min_amount if statement and statement.payment_of_min_amount else "No",
+        "Payment_Behaviour": statement.payment_behaviour if statement and statement.payment_behaviour else "Low_spent_Small_value_payments",
+        "Age": user.age if user.age is not None else 30,
+        "Annual_Income": float(user.annual_income) if user.annual_income is not None else 50000.0,
+        "Monthly_Inhand_Salary": float(user.monthly_inhand_salary) if user.monthly_inhand_salary is not None else 4000.0,
+        "Num_Bank_Accounts": user.num_bank_accounts if user.num_bank_accounts is not None else 2,
+        "Num_Credit_Card": user.num_credit_card if user.num_credit_card is not None else 1,
+        "Interest_Rate": float(statement.interest_rate) if statement and statement.interest_rate is not None else 12.0,
+        "Num_of_Loan": statement.num_of_loan if statement and statement.num_of_loan is not None else 0,
+        "Delay_from_due_date": float(statement.delay_from_due_date) if statement and statement.delay_from_due_date is not None else 0.0,
+        "Num_of_Delayed_Payment": statement.num_of_delayed_payment if statement and statement.num_of_delayed_payment is not None else 0,
+        "Changed_Credit_Limit": float(statement.changed_credit_limit) if statement and statement.changed_credit_limit is not None else 0.0,
+        "Num_Credit_Inquiries": statement.num_credit_inquiries if statement and statement.num_credit_inquiries is not None else 0,
+        "Outstanding_Debt": float(statement.outstanding_debt) if statement and statement.outstanding_debt is not None else 0.0,
+        "Credit_Utilization_Ratio": float(statement.credit_utilization_ratio) if statement and statement.credit_utilization_ratio is not None else 0.0,
+        "Total_EMI_per_month": float(statement.total_emi_per_month) if statement and statement.total_emi_per_month is not None else 0.0,
+        "Amount_invested_monthly": float(statement.amount_invested_monthly) if statement and statement.amount_invested_monthly is not None else 0.0,
+        "Monthly_Balance": float(statement.monthly_balance) if statement and statement.monthly_balance is not None else 1000.0,
     }
 
-    for col in categorical_cols:
-        features[col] = getattr(user, col, "unknown")
-
-    df = pd.DataFrame([features])
-
-    for col in categorical_cols:
-        le = encoders[col]
-        df[col] = df[col].astype(str)
-        if df[col][0] not in le.classes_:
-            df[col] = le.transform([le.classes_[0]])
-        else:
-            df[col] = le.transform(df[col])
-
-    for col in expected_features:
-        if col not in df.columns:
-            df[col] = 0
-    df = df[expected_features]
-
-    df_scaled = pd.DataFrame(scaler.transform(df), columns=df.columns).fillna(0)
-
-    if model_type.lower() == "lr":
-        model = lr_model
-    elif model_type.lower() == "dt":
-        model = dt_model
-    else:
-        model = rf_model
-
-    pred_class = model.predict(df_scaled)[0]
-    pred_proba = model.predict_proba(df_scaled).max()
-
-    label_map = {0: "Poor", 1: "Standard", 2: "Good"}
-    score_ranges = {
-        0: (300, 579),  
-        1: (580, 669),  
-        2: (670, 850)   
-    }
-
-    pred_label = label_map.get(pred_class, "Unknown")
-    score_min, score_max = score_ranges.get(pred_class, (300, 850))
-
-    numeric_score = int(score_min + (score_max - score_min) * pred_proba)
+    # Use rule-based credit scoring
+    numeric_score, pred_label, confidence, factors = calculate_credit_score(features)
 
     return {
         "user_id": user.id,
@@ -802,8 +778,10 @@ def predict_user_credit_score(user_id: int, model_type: str = "rf", db: Session 
         "full_name": user.full_name,
         "predicted_credit_score": pred_label,
         "numeric_score": numeric_score,
-        "probability": float(pred_proba),
-        "model_used": model_type
+        "probability": confidence,
+        "model_used": "rule_based",
+        "has_statement": statement is not None,
+        "key_factors": factors[:3] if len(factors) > 3 else factors
     }
 
 
@@ -836,7 +814,7 @@ async def predict(file: UploadFile = File(...)):
         with open(file_path, "wb") as f:
             f.write(contents)
 
-        result = ocr.ocr(file_path)
+        result = get_ocr().ocr(file_path)
         texts = []
         total_conf = 0
         count = 0

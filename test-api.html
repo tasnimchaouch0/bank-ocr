@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        button { margin: 10px; padding: 10px 20px; cursor: pointer; }
+        .output { background: #f4f4f4; padding: 15px; margin: 10px 0; border-radius: 5px; white-space: pre-wrap; }
+        .success { color: green; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <h1>Backend API Test</h1>
+    
+    <h2>Test Login</h2>
+    <button onclick="testLogin()">Test Login (admin2/admin123)</button>
+    <div id="login-output" class="output"></div>
+
+    <h2>Test Credit Scores</h2>
+    <button onclick="testCreditScores()">Test Get All Credit Scores</button>
+    <div id="credit-output" class="output"></div>
+
+    <script>
+        const API_BASE_URL = 'http://localhost:8000';
+
+        async function testLogin() {
+            const output = document.getElementById('login-output');
+            output.innerHTML = 'Testing login...';
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        username: 'admin2',
+                        password: 'admin123'
+                    }),
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    output.innerHTML = `<span class="success">✓ Success (${response.status})</span>\n\n` + JSON.stringify(data, null, 2);
+                    // Store token for credit score test
+                    localStorage.setItem('test_token', data.access_token);
+                } else {
+                    output.innerHTML = `<span class="error">✗ Failed (${response.status})</span>\n\n` + JSON.stringify(data, null, 2);
+                }
+            } catch (error) {
+                output.innerHTML = `<span class="error">✗ Error:</span> ${error.message}`;
+            }
+        }
+
+        async function testCreditScores() {
+            const output = document.getElementById('credit-output');
+            output.innerHTML = 'Testing credit scores...';
+            
+            const token = localStorage.getItem('test_token');
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/credit_score/predict_all`, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(token && { Authorization: `Bearer ${token}` }),
+                    },
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    output.innerHTML = `<span class="success">✓ Success (${response.status})</span>\n\nFound ${data.length} users\n\n` + JSON.stringify(data, null, 2);
+                } else {
+                    output.innerHTML = `<span class="error">✗ Failed (${response.status})</span>\n\n` + JSON.stringify(data, null, 2);
+                }
+            } catch (error) {
+                output.innerHTML = `<span class="error">✗ Error:</span> ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>
