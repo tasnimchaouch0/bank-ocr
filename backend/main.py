@@ -6,7 +6,6 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
-from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from pydantic import BaseModel, EmailStr
@@ -23,6 +22,7 @@ import requests
 from sqlalchemy.orm import Session
 import pickle
 import numpy as np
+import bcrypt as _bcrypt_lib
 from fastapi import FastAPI, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -60,7 +60,6 @@ Base = declarative_base()
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
 app = FastAPI(title="Bank OCR API", version="1.0.0")
@@ -357,10 +356,14 @@ def get_db():
 
 # Utils
 def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+    # Use bcrypt directly (passlib is incompatible with bcrypt 4.x)
+    pw_bytes = plain_password.encode("utf-8")[:72]
+    hash_bytes = hashed_password.encode("utf-8") if isinstance(hashed_password, str) else hashed_password
+    return _bcrypt_lib.checkpw(pw_bytes, hash_bytes)
 
 def get_password_hash(password):
-    return pwd_context.hash(password)
+    pw_bytes = password.encode("utf-8")[:72]
+    return _bcrypt_lib.hashpw(pw_bytes, _bcrypt_lib.gensalt()).decode("utf-8")
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
@@ -726,7 +729,7 @@ def predict_all_users(model_type: str = "rf", db: Session = Depends(get_db)):
             "predicted_credit_score": pred_label,
             "numeric_score": numeric_score,
             "probability": confidence,
-            "model_used": "rule_based",
+            "model_used": "ml_gradient_boosting",
             "key_factors": factors[:3] if len(factors) > 3 else factors
         })
 
@@ -779,7 +782,7 @@ def predict_user_credit_score(user_id: int, model_type: str = "rf", db: Session 
         "predicted_credit_score": pred_label,
         "numeric_score": numeric_score,
         "probability": confidence,
-        "model_used": "rule_based",
+        "model_used": "ml_gradient_boosting",
         "has_statement": statement is not None,
         "key_factors": factors[:3] if len(factors) > 3 else factors
     }
