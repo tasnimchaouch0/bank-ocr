@@ -22,4 +22,37 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Environment variables
 .env
+.env.*
+
+# Python virtual environments
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# ML model artifacts
+*.pkl
+*.joblib
+models/*.pkl
+models/*.joblib
+
+# Large data files
+data/*.csv
+*.csv
+
+# Temporary / draft files
+temp_*
+draft
+draft2
+src/draft2
+ocr/draft
+
+# macOS
+.DS_Store
